@@ -265,7 +265,7 @@ def generate_dummy_summary(participant_name, course_info):
     
     try:
         response = client.messages.create(
-            model="claude-3-5-haiku-20241022",
+            model="claude-sonnet-4-20250514",
             max_tokens=3000,
             messages=[{"role": "user", "content": prompt}]
         )
@@ -324,7 +324,7 @@ def generate_dummy_answers(pre_tasks, participant_name, course_info):
     
     try:
         response = client.messages.create(
-            model="claude-3-5-haiku-20241022",
+            model="claude-sonnet-4-20250514",
             max_tokens=3000,
             messages=[{"role": "user", "content": prompt}]
         )
@@ -407,7 +407,7 @@ def generate_pre_tasks(course_info, participant_name):
     
     try:
         response = client.messages.create(
-            model="claude-3-5-haiku-20241022",
+            model="claude-sonnet-4-20250514",
             max_tokens=3000,
             messages=[{"role": "user", "content": prompt}]
         )
@@ -476,7 +476,7 @@ def evaluate_participant(pre_task_answers, summary_sheet):
     
     try:
         response = client.messages.create(
-            model="claude-3-5-haiku-20241022",
+            model="claude-sonnet-4-20250514",
             max_tokens=2000,
             messages=[{"role": "user", "content": prompt}]
         )
@@ -497,7 +497,7 @@ def _call_claude(client, system_prompt, user_content):
     """Claude API呼び出しの共通ラッパー"""
     try:
         response = client.messages.create(
-            model="claude-3-5-haiku-20241022",
+            model="claude-sonnet-4-20250514",
             max_tokens=4000,
             messages=[
                 {"role": "user", "content": f"System: {system_prompt}\n\nUser: {user_content}\n\nPlease respond with valid JSON only."}
@@ -547,8 +547,10 @@ def run_assessment_evaluation_pipeline(user_input_df):
             
         final_result = {}
 
-        with st.status("評価パイプラインを実行中...", expand=True) as status:
-            status.update(label="ステップ1/3: テキストを正規化しています...", state="running")
+        # st.statusの使用方法を変更（expandパラメータを削除）
+        with st.spinner("評価パイプラインを実行中..."):
+            # ステップ1
+            st.info("ステップ1/3: テキストを正規化しています...")
             normalized_data = _call_claude(
                 client,
                 ASSESSMENT_PROMPTS["pr_norm_ja"]["content"],
@@ -558,8 +560,10 @@ def run_assessment_evaluation_pipeline(user_input_df):
                 st.error("正規化処理に失敗しました")
                 return None
             final_result["normalized"] = normalized_data
+            st.success("ステップ1/3: 正規化完了")
 
-            status.update(label="ステップ2/3: 評価エビデンスを抽出しています...", state="running")
+            # ステップ2
+            st.info("ステップ2/3: 評価エビデンスを抽出しています...")
             evidence_data = _call_claude(
                 client,
                 ASSESSMENT_PROMPTS["pr_evi_ja"]["content"],
@@ -569,8 +573,10 @@ def run_assessment_evaluation_pipeline(user_input_df):
                 st.error("エビデンス抽出に失敗しました")
                 return None
             final_result["evidence"] = evidence_data
+            st.success("ステップ2/3: エビデンス抽出完了")
 
-            status.update(label="ステップ3/3: 最終スコアを算出しています...", state="running")
+            # ステップ3
+            st.info("ステップ3/3: 最終スコアを算出しています...")
             user_content = f"正規化入力:\n{json.dumps(normalized_data)}\n---\nエビデンス:\n{json.dumps(evidence_data)}"
             scores = _call_claude(
                 client,
@@ -585,8 +591,9 @@ def run_assessment_evaluation_pipeline(user_input_df):
             acquisition_scores = _calculate_acquisition_scores(scores)
             scores["acquisition"] = acquisition_scores
             final_result["scores"] = scores
+            st.success("ステップ3/3: スコア算出完了")
             
-            status.update(label="評価パイプライン完了！", state="complete")
+            st.success("✅ 評価パイプライン完了！")
 
         return final_result
 
