@@ -640,20 +640,20 @@ def main():
             st.divider()
             
             # APIキー設定
-            with st.expander("🔑 API設定", expanded=not st.session_state.api_key):
-                api_key_input = st.text_input(
-                    "Claude API Key",
-                    value=st.session_state.api_key,
-                    type="password",
-                    help="Anthropic Claude APIのキーを入力してください"
-                )
-                if st.button("APIキーを保存", type="primary"):
-                    if api_key_input:
-                        st.session_state.api_key = api_key_input
-                        st.success("✅ APIキーを保存しました")
-                        st.rerun()
-                    else:
-                        st.error("APIキーを入力してください")
+            # with st.expander("🔑 API設定", expanded=not st.session_state.api_key):
+            #     api_key_input = st.text_input(
+            #         "Claude API Key",
+            #         value=st.session_state.api_key,
+            #         type="password",
+            #         help="Anthropic Claude APIのキーを入力してください"
+            #     )
+            #     if st.button("APIキーを保存", type="primary"):
+            #         if api_key_input:
+            #             st.session_state.api_key = api_key_input
+            #             st.success("✅ APIキーを保存しました")
+            #             st.rerun()
+            #         else:
+            #             st.error("APIキーを入力してください")
             
             if not st.session_state.api_key:
                 st.warning("⚠️ APIキーを設定してください")
