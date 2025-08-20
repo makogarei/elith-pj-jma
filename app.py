@@ -265,7 +265,7 @@ def generate_dummy_summary(participant_name, course_info):
     
     try:
         response = client.messages.create(
-            model="claude-3-5-haiku-20241022",
+            model="claude-sonnet-4-20250514",
             max_tokens=3000,
             messages=[{"role": "user", "content": prompt}]
         )
@@ -324,7 +324,7 @@ def generate_dummy_answers(pre_tasks, participant_name, course_info):
     
     try:
         response = client.messages.create(
-            model="claude-3-5-haiku-20241022",
+            model="claude-sonnet-4-20250514",
             max_tokens=3000,
             messages=[{"role": "user", "content": prompt}]
         )
@@ -407,7 +407,7 @@ def generate_pre_tasks(course_info, participant_name):
     
     try:
         response = client.messages.create(
-            model="claude-3-5-haiku-20241022",
+            model="claude-sonnet-4-20250514",
             max_tokens=3000,
             messages=[{"role": "user", "content": prompt}]
         )
@@ -476,7 +476,7 @@ def evaluate_participant(pre_task_answers, summary_sheet):
     
     try:
         response = client.messages.create(
-            model="claude-3-5-haiku-20241022",
+            model="claude-sonnet-4-20250514",
             max_tokens=2000,
             messages=[{"role": "user", "content": prompt}]
         )
@@ -497,7 +497,7 @@ def _call_claude(client, system_prompt, user_content):
     """Claude API呼び出しの共通ラッパー"""
     try:
         response = client.messages.create(
-            model="claude-3-5-haiku-20241022",
+            model="claude-sonnet-4-20250514",
             max_tokens=4000,
             messages=[
                 {"role": "user", "content": f"System: {system_prompt}\n\nUser: {user_content}\n\nPlease respond with valid JSON only."}
@@ -547,8 +547,10 @@ def run_assessment_evaluation_pipeline(user_input_df):
             
         final_result = {}
 
-        with st.status("評価パイプラインを実行中...", expand=True) as status:
-            status.update(label="ステップ1/3: テキストを正規化しています...", state="running")
+        # st.statusの使用方法を変更（expandパラメータを削除）
+        with st.spinner("評価パイプラインを実行中..."):
+            # ステップ1
+            st.info("ステップ1/3: テキストを正規化しています...")
             normalized_data = _call_claude(
                 client,
                 ASSESSMENT_PROMPTS["pr_norm_ja"]["content"],
@@ -558,8 +560,10 @@ def run_assessment_evaluation_pipeline(user_input_df):
                 st.error("正規化処理に失敗しました")
                 return None
             final_result["normalized"] = normalized_data
+            st.success("ステップ1/3: 正規化完了")
 
-            status.update(label="ステップ2/3: 評価エビデンスを抽出しています...", state="running")
+            # ステップ2
+            st.info("ステップ2/3: 評価エビデンスを抽出しています...")
             evidence_data = _call_claude(
                 client,
                 ASSESSMENT_PROMPTS["pr_evi_ja"]["content"],
@@ -569,8 +573,10 @@ def run_assessment_evaluation_pipeline(user_input_df):
                 st.error("エビデンス抽出に失敗しました")
                 return None
             final_result["evidence"] = evidence_data
+            st.success("ステップ2/3: エビデンス抽出完了")
 
-            status.update(label="ステップ3/3: 最終スコアを算出しています...", state="running")
+            # ステップ3
+            st.info("ステップ3/3: 最終スコアを算出しています...")
             user_content = f"正規化入力:\n{json.dumps(normalized_data)}\n---\nエビデンス:\n{json.dumps(evidence_data)}"
             scores = _call_claude(
                 client,
@@ -585,8 +591,9 @@ def run_assessment_evaluation_pipeline(user_input_df):
             acquisition_scores = _calculate_acquisition_scores(scores)
             scores["acquisition"] = acquisition_scores
             final_result["scores"] = scores
+            st.success("ステップ3/3: スコア算出完了")
             
-            status.update(label="評価パイプライン完了！", state="complete")
+            st.success("✅ 評価パイプライン完了！")
 
         return final_result
 
@@ -1100,33 +1107,238 @@ def main():
         elif menu == "評価設定":
             st.header("⚙️ 評価設定")
             
-            st.subheader("🚫 除外キーワード設定")
-            st.info("評価時に無視するキーワードを設定できます。これらのキーワードを含む文は評価から除外されます。")
+            # タブで設定項目を分ける
+            tab1, tab2 = st.tabs(["除外キーワード設定", "評価プロンプト設定"])
             
-            new_keyword = st.text_input(
-                "除外キーワードを追加",
-                placeholder="例: ダミー、テスト、サンプル"
-            )
-            if st.button("➕ キーワードを追加", type="primary"):
-                if new_keyword and new_keyword not in st.session_state.exclude_keywords:
-                    st.session_state.exclude_keywords.append(new_keyword)
-                    st.success(f"✅ 「{new_keyword}」を除外キーワードに追加しました")
-                    st.rerun()
+            with tab1:
+                st.subheader("🚫 除外キーワード設定")
+                st.info("評価時に無視するキーワードを設定できます。これらのキーワードを含む文は評価から除外されます。")
+                
+                new_keyword = st.text_input(
+                    "除外キーワードを追加",
+                    placeholder="例: ダミー、テスト、サンプル"
+                )
+                if st.button("➕ キーワードを追加", type="primary"):
+                    if new_keyword and new_keyword not in st.session_state.exclude_keywords:
+                        st.session_state.exclude_keywords.append(new_keyword)
+                        st.success(f"✅ 「{new_keyword}」を除外キーワードに追加しました")
+                        st.rerun()
+                
+                if st.session_state.exclude_keywords:
+                    st.write("**登録済み除外キーワード:**")
+                    cols = st.columns(4)
+                    for idx, keyword in enumerate(st.session_state.exclude_keywords):
+                        with cols[idx % 4]:
+                            col1, col2 = st.columns([3, 1])
+                            with col1:
+                                st.write(f"• {keyword}")
+                            with col2:
+                                if st.button("×", key=f"del_kw_{idx}"):
+                                    st.session_state.exclude_keywords.pop(idx)
+                                    st.rerun()
+                else:
+                    st.write("除外キーワードは設定されていません")
             
-            if st.session_state.exclude_keywords:
-                st.write("**登録済み除外キーワード:**")
-                cols = st.columns(4)
-                for idx, keyword in enumerate(st.session_state.exclude_keywords):
-                    with cols[idx % 4]:
-                        col1, col2 = st.columns([3, 1])
-                        with col1:
-                            st.write(f"• {keyword}")
-                        with col2:
-                            if st.button("×", key=f"del_kw_{idx}"):
-                                st.session_state.exclude_keywords.pop(idx)
-                                st.rerun()
-            else:
-                st.write("除外キーワードは設定されていません")
+            with tab2:
+                st.subheader("📝 評価プロンプトテンプレート")
+                st.info("AI評価で使用するプロンプトをカスタマイズできます。変数は {pre_task_answers}, {summary_sheet}, {evaluation_criteria} が使用できます。")
+                
+                # デフォルトプロンプト
+                default_prompt = """以下の受講者の事前課題回答とまとめシートを基に、8つの評価基準それぞれについて5点満点で評価してください。
+
+事前課題回答:
+{pre_task_answers}
+
+まとめシート:
+{summary_sheet}
+
+評価基準:
+{evaluation_criteria}
+
+各基準について1-5点で評価し、評価理由を記載してください。
+事前課題とまとめシートの両方を考慮して総合的に評価してください。
+
+JSON形式で出力してください：
+{{
+    "evaluations": [
+        {{
+            "criteria": "基準名",
+            "score": 点数,
+            "reason": "評価理由"
+        }}
+    ],
+    "total_score": 合計点,
+    "overall_feedback": "総合フィードバック"
+}}"""
+                
+                # プリセットプロンプトの選択
+                st.write("**プロンプトテンプレートを選択:**")
+                preset_option = st.selectbox(
+                    "プリセット",
+                    options=["カスタム", "デフォルト", "詳細評価", "簡易評価", "成長重視"],
+                    help="プリセットを選択するか、カスタムで独自のプロンプトを作成できます"
+                )
+                
+                # プリセットプロンプトの定義
+                preset_prompts = {
+                    "デフォルト": default_prompt,
+                    "詳細評価": """受講者の事前課題回答とまとめシートを詳細に分析し、以下の観点から評価してください。
+
+【評価対象データ】
+◆事前課題回答:
+{pre_task_answers}
+
+◆まとめシート:
+{summary_sheet}
+
+【評価基準】
+{evaluation_criteria}
+
+【評価指示】
+1. 各基準について1-5点で採点（5点が最高）
+2. 評価理由は具体的な記述を引用しながら150-200字で記載
+3. 改善点や強みを明確に指摘
+4. 実践への意欲や理解度を重視
+
+JSON形式で出力:
+{{
+    "evaluations": [
+        {{
+            "criteria": "基準名",
+            "score": 点数,
+            "reason": "評価理由（具体的な記述を引用）"
+        }}
+    ],
+    "total_score": 合計点,
+    "overall_feedback": "総合フィードバック（強み・改善点・今後への期待を含む）"
+}}""",
+                    "簡易評価": """事前課題とまとめシートから受講者の理解度を評価してください。
+
+データ:
+- 事前課題: {pre_task_answers}
+- まとめ: {summary_sheet}
+- 基準: {evaluation_criteria}
+
+各基準を1-5点で評価し、簡潔な理由（50-80字）を付けてください。
+
+JSON出力:
+{{
+    "evaluations": [
+        {{"criteria": "基準名", "score": 点数, "reason": "理由"}}
+    ],
+    "total_score": 合計,
+    "overall_feedback": "総評"
+}}""",
+                    "成長重視": """受講者の成長可能性と実践意欲を重視して評価してください。
+
+【評価材料】
+■事前課題での気づき:
+{pre_task_answers}
+
+■研修での学び:
+{summary_sheet}
+
+【評価の視点】
+{evaluation_criteria}
+
+【評価方針】
+- 現状の課題認識の深さを重視（配点40%）
+- 改善への具体的なアプローチ（配点30%）
+- 実践への意欲と計画性（配点30%）
+- 各項目1-5点で評価
+
+【求める出力】
+JSON形式で以下を出力:
+{{
+    "evaluations": [
+        {{
+            "criteria": "基準名",
+            "score": 点数,
+            "reason": "成長の観点からの評価理由（100-150字）"
+        }}
+    ],
+    "total_score": 合計点,
+    "overall_feedback": "今後の成長への期待と具体的アドバイス（200字程度）"
+}}"""
+                }
+                
+                # プロンプト編集エリア
+                if preset_option != "カスタム":
+                    if st.button(f"「{preset_option}」プロンプトを適用", type="primary"):
+                        st.session_state.evaluation_prompt_template = preset_prompts[preset_option]
+                        st.success(f"✅ {preset_option}プロンプトを適用しました")
+                        st.rerun()
+                
+                st.write("**現在のプロンプト:**")
+                
+                # テキストエリアでプロンプト編集
+                edited_prompt = st.text_area(
+                    "評価プロンプト",
+                    value=st.session_state.evaluation_prompt_template,
+                    height=400,
+                    help="プロンプトを編集してAI評価の挙動をカスタマイズできます"
+                )
+                
+                # ボタンを横並びに
+                col1, col2, col3 = st.columns([1, 1, 1])
+                
+                with col1:
+                    if st.button("💾 プロンプトを保存", type="primary"):
+                        st.session_state.evaluation_prompt_template = edited_prompt
+                        st.success("✅ プロンプトを保存しました")
+                        st.rerun()
+                
+                with col2:
+                    if st.button("🔄 デフォルトに戻す"):
+                        st.session_state.evaluation_prompt_template = default_prompt
+                        st.success("✅ デフォルトのプロンプトに戻しました")
+                        st.rerun()
+                
+                with col3:
+                    # プロンプトのエクスポート
+                    st.download_button(
+                        label="📥 プロンプトをダウンロード",
+                        data=st.session_state.evaluation_prompt_template,
+                        file_name="evaluation_prompt.txt",
+                        mime="text/plain"
+                    )
+                
+                # プロンプトのプレビュー
+                with st.expander("プロンプトのプレビュー（変数展開例）"):
+                    st.write("**実際の評価時には以下のように変数が展開されます:**")
+                    
+                    sample_preview = st.session_state.evaluation_prompt_template.format(
+                        pre_task_answers="[受講者の事前課題回答がここに入ります]",
+                        summary_sheet="[受講者のまとめシートがここに入ります]",
+                        evaluation_criteria="[8つの評価基準がここに入ります]"
+                    )
+                    st.code(sample_preview, language="text")
+                
+                # プロンプト作成のヒント
+                with st.expander("💡 プロンプト作成のヒント"):
+                    st.markdown("""
+                    ### 効果的なプロンプトの書き方
+                    
+                    1. **明確な指示**: 評価の観点や重視するポイントを明確に記載
+                    2. **出力形式の指定**: JSON形式の構造を正確に指定
+                    3. **評価基準の活用**: `{evaluation_criteria}`変数を適切に配置
+                    4. **文字数の指定**: 評価理由の文字数を指定すると一貫性が保てます
+                    5. **重み付け**: 特定の観点を重視する場合は配点比率を明記
+                    
+                    ### 使用可能な変数
+                    - `{pre_task_answers}`: 事前課題の回答内容
+                    - `{summary_sheet}`: まとめシートの内容
+                    - `{evaluation_criteria}`: 8つの評価基準
+                    
+                    ### 必須の出力形式
+                    ```json
+                    {
+                        "evaluations": [...],
+                        "total_score": 数値,
+                        "overall_feedback": "文字列"
+                    }
+                    ```
+                    """)
     
     # アセスメント評価システム
     elif st.session_state.system_mode == "assessment":
