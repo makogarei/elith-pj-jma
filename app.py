@@ -13,7 +13,7 @@ import base64
 
 # ページ設定
 st.set_page_config(
-    page_title="統合管理システム",
+    page_title="研修評価デモ",
     page_icon="🎓",
     layout="wide"
 )
@@ -133,6 +133,7 @@ EVALUATION_CRITERIA = [
 
 def get_client():
     """Claude APIクライアントを取得"""
+    st.session_state.api_key=st.secrets["CLAUDE_API_KEY"]
     if st.session_state.api_key:
         return anthropic.Anthropic(api_key=st.session_state.api_key)
     return None
