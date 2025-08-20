@@ -40,7 +40,7 @@ if 'dummy_answers' not in st.session_state:
 if 'dummy_summary' not in st.session_state:
     st.session_state.dummy_summary = {}
 if 'api_key' not in st.session_state:
-    st.session_state.api_key = ""
+    st.session_state.api_key = st.secrets["CLAUDE_API_KEY"]
 if 'exclude_keywords' not in st.session_state:
     st.session_state.exclude_keywords = []
 if 'evaluation_prompt_template' not in st.session_state:
@@ -133,7 +133,7 @@ EVALUATION_CRITERIA = [
 
 def get_client():
     """Claude APIクライアントを取得"""
-    st.session_state.api_key=st.secrets["CLAUDE_API_KEY"]
+    # st.session_state.api_key=st.secrets["CLAUDE_API_KEY"]
     if st.session_state.api_key:
         return anthropic.Anthropic(api_key=st.session_state.api_key)
     return None
