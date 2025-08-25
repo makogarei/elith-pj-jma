@@ -760,7 +760,6 @@ def main():
                 st.warning("⚠️ APIキーを設定してください")
             else:
                 st.success("✅ API設定済み")
-            # ドライラン切替
             st.divider()
             st.session_state.dry_run = st.checkbox(
                 "ドライラン（ダミー出力）",
