@@ -760,12 +760,6 @@ def main():
                 st.warning("⚠️ APIキーを設定してください")
             else:
                 st.success("✅ API設定済み")
-            st.divider()
-            st.session_state.dry_run = st.checkbox(
-                "ドライラン（ダミー出力）",
-                value=st.session_state.get('dry_run', False),
-                help="APIを使わずダミー結果で画面表示と形式を確認します"
-            )
             
             st.divider()
             
@@ -1479,6 +1473,12 @@ JSON形式で以下を出力:
                 st.warning("⚠️ APIキーを設定してください")
             else:
                 st.success("✅ API設定済み")
+            st.divider()
+            st.session_state.dry_run = st.checkbox(
+                "ドライラン（ダミー出力）",
+                value=st.session_state.get('dry_run', False),
+                help="APIを使わずダミー結果で画面表示と形式を確認します"
+            )
         
         st.header("サクセッション評価ツール")
         st.info("課題と実施内容など、評価に必要な情報を1つのテキストボックスにまとめて入力してください。\n入力後に『AI評価を実行する』を押すと3ステップ評価を行います。")
