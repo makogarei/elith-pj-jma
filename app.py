@@ -86,7 +86,7 @@ ASSESSMENT_PROMPTS = {
     "pr_score_ja": {
         "step": "score",
         "name": "Score JA",
-        "content": "Evidenceに基づき各項目を1-5で採点。理由は100〜180字で、必ず evidenceIds を含める。獲得度は四捨五入で算出: solution=0.40*VCI+0.30*DE+0.30*LA、achievement=0.50*DE+0.30*OL+0.20*LA、management=0.40*OL+0.40*SF+0.20*MR。JSONのみで返答。"
+        "content": "Evidence(list)に基づき、以下の8項目についてコメント（理由）と関連エビデンスIDを返してください。数値スコアは任意、JSONのみで返答。\n\n必須の構造:\n{\n  \"competencies\": {\n    \"SF\": {\"reason\": \"...\", \"evidenceIds\": [\"EV-1\", ...]},\n    \"VCI\": {\"reason\": \"...\", \"evidenceIds\": [...]},\n    \"OL\": {\"reason\": \"...\", \"evidenceIds\": [...]},\n    \"DE\": {\"reason\": \"...\", \"evidenceIds\": [...]},\n    \"LA\": {\"reason\": \"...\", \"evidenceIds\": [...]}\n  },\n  \"readiness\": {\n    \"CV\": {\"reason\": \"...\", \"evidenceIds\": [...]},\n    \"MR\": {\"reason\": \"...\", \"evidenceIds\": [...]},\n    \"MN\": {\"reason\": \"...\", \"evidenceIds\": [...]}\n  }\n}\n\n注: reasonは100〜180字。evidenceIdsは抽出済みEvidenceのidのみ。"
     }
 }
 
@@ -94,6 +94,22 @@ ACQUISITION_FORMULAS = {
     "solution": {"VCI": 0.40, "DE": 0.30, "LA": 0.30},
     "achievement": {"DE": 0.50, "OL": 0.30, "LA": 0.20},
     "management": {"OL": 0.40, "SF": 0.40, "MR": 0.20}
+}
+
+# 表示用のラベルと順序（獲得度・準備度）
+COMPETENCY_ORDER = ["SF", "VCI", "OL", "DE", "LA"]
+READINESS_ORDER = ["CV", "MR", "MN"]
+COMPETENCY_LABELS = {
+    "SF": "戦略構想力",
+    "VCI": "価値創出・イノベーション力",
+    "OL": "人的資源・組織運営力",
+    "DE": "意思決定・実行力",
+    "LA": "学習・適応力",
+}
+READINESS_LABELS = {
+    "CV": "キャリアビジョン",
+    "MR": "使命感・責任感",
+    "MN": "体制・ネットワーク",
 }
 
 # 8つの管理項目
@@ -1400,18 +1416,74 @@ JSON形式で以下を出力:
                 final_evaluation = run_assessment_evaluation_pipeline(df)
                 if final_evaluation:
                     st.header("最終評価結果")
-                    # まずエビデンス（原文抜粋）を簡潔に表示
-                    evidence_list = final_evaluation.get("evidence", {}).get("list", [])
-                    if evidence_list:
-                        st.subheader("抽出エビデンス（原文抜粋）")
-                        for ev in evidence_list:
-                            quote = ev.get("quote", "")
-                            meta = f"[{ev.get('target','')} | {ev.get('polarity','')}] {ev.get('note','')}"
-                            if quote:
-                                st.write(quote)
-                                if meta.strip():
-                                    st.caption(meta)
-                                st.divider()
+
+                    # 構造化表示: 獲得度/準備度 → 各中項目で原文エビデンスとコメント
+                    scores = final_evaluation.get("scores", {}) or {}
+                    evidence_list = final_evaluation.get("evidence", {}).get("list", []) or []
+
+                    # インデックス構築
+                    ev_by_id = {}
+                    ev_by_target = {code: [] for code in (COMPETENCY_ORDER + READINESS_ORDER)}
+                    for ev in evidence_list:
+                        ev_id = ev.get("id")
+                        if ev_id:
+                            ev_by_id[ev_id] = ev
+                        tgt = ev.get("target")
+                        if tgt in ev_by_target:
+                            ev_by_target[tgt].append(ev)
+
+                    def render_item(block_title, code, label, data_block):
+                        st.markdown(f"### {label}")
+                        # コメント（理由）
+                        reason = ""
+                        if isinstance(data_block, dict):
+                            reason = data_block.get("reason") or data_block.get("Reason") or ""
+
+                        # 関連エビデンスの解決
+                        quotes = []
+                        ids = []
+                        if isinstance(data_block, dict):
+                            ids = data_block.get("evidenceIds") or data_block.get("evidence_ids") or []
+                            if isinstance(ids, dict):
+                                # 万一、{id:...}形式の場合に備える
+                                ids = list(ids.values())
+                        for eid in ids:
+                            ev = ev_by_id.get(eid)
+                            if ev and ev.get("quote"):
+                                quotes.append(ev.get("quote"))
+                        # フォールバック: target一致
+                        if not quotes:
+                            for ev in ev_by_target.get(code, [])[:3]:
+                                if ev.get("quote"):
+                                    quotes.append(ev.get("quote"))
+
+                        # 根拠（原文）
+                        st.write("根拠（原文）")
+                        if quotes:
+                            for q in quotes:
+                                st.write(q)
+                        else:
+                            st.caption("該当する原文の根拠は見つかりませんでした。")
+
+                        # コメント（理由）
+                        if reason:
+                            st.write("コメント")
+                            st.write(reason)
+
+                    # 獲得度
+                    st.subheader("獲得度")
+                    comp = scores.get("competencies", {}) or {}
+                    for code in COMPETENCY_ORDER:
+                        render_item("competencies", code, COMPETENCY_LABELS.get(code, code), comp.get(code, {}))
+                        st.divider()
+
+                    # 準備度
+                    st.subheader("準備度")
+                    ready = scores.get("readiness", {}) or {}
+                    for code in READINESS_ORDER:
+                        render_item("readiness", code, READINESS_LABELS.get(code, code), ready.get(code, {}))
+                        st.divider()
+
                     with st.expander("詳細（JSON全体）"):
                         st.json(final_evaluation)
 
