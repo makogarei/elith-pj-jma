@@ -700,7 +700,13 @@ def run_assessment_evaluation_pipeline(user_input_df):
 
 # === メインアプリケーション ===
 def main():
-    st.title("🎓 統合管理システム")
+    # タイトルはモードに応じて表示名を切り替える
+    if st.session_state.system_mode == "assessment":
+        st.title("📊 サクセッション評価")
+    elif st.session_state.system_mode == "training":
+        st.title("📚 研修管理システム")
+    else:
+        st.title("🎓 統合管理システム")
     
     # システム選択
     if st.session_state.system_mode is None:
@@ -716,9 +722,9 @@ def main():
                 st.rerun()
         
         with col2:
-            st.subheader("📊 昇進アセスメント評価")
-            st.write("AIによる昇進アセスメント評価を3ステップで実行します。")
-            if st.button("アセスメント評価を使用", type="primary", use_container_width=True):
+            st.subheader("📊 サクセッション評価")
+            st.write("サクセッション評価を3ステップで実行します。")
+            if st.button("サクセッションを使用", type="primary", use_container_width=True):
                 st.session_state.system_mode = "assessment"
                 st.rerun()
     
@@ -1475,7 +1481,7 @@ JSON形式で以下を出力:
             else:
                 st.success("✅ API設定済み")
         
-        st.header("AIによる昇進アセスメント評価ツール")
+        st.header("サクセッション評価ツール")
         st.info("課題と実施内容など、評価に必要な情報を1つのテキストボックスにまとめて入力してください。\n入力後に『AI評価を実行する』を押すと3ステップ評価を行います。")
 
         user_bulk_text = st.text_area(
