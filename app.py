@@ -88,7 +88,7 @@ ASSESSMENT_PROMPTS = {
     "pr_score_ja": {
         "step": "score",
         "name": "Score JA",
-        "content": "Evidence(list)に基づき、以下の8項目についてコメント（理由）と関連エビデンスIDを返してください。数値スコアは任意、JSONのみで返答。\n\n必須の構造:\n{\n  \"competencies\": {\n    \"SF\": {\"reason\": \"...\", \"evidenceIds\": [\"EV-1\", ...]},\n    \"VCI\": {\"reason\": \"...\", \"evidenceIds\": [...]},\n    \"OL\": {\"reason\": \"...\", \"evidenceIds\": [...]},\n    \"DE\": {\"reason\": \"...\", \"evidenceIds\": [...]},\n    \"LA\": {\"reason\": \"...\", \"evidenceIds\": [...]}\n  },\n  \"readiness\": {\n    \"CV\": {\"reason\": \"...\", \"evidenceIds\": [...]},\n    \"MR\": {\"reason\": \"...\", \"evidenceIds\": [...]},\n    \"MN\": {\"reason\": \"...\", \"evidenceIds\": [...]}\n  }\n}\n\n注: reasonは100〜180字。evidenceIdsは抽出済みEvidenceのidのみ。"
+        "content": "Evidence(list)に基づき、以下の8項目について score(1-5), reason, evidenceIds を必ず返してください。JSONのみ。\n\n必須の構造:\n{\n  \"competencies\": {\n    \"SF\": {\"score\": 1, \"reason\": \"...\", \"evidenceIds\": [\"EV-1\", ...]},\n    \"VCI\": {\"score\": 1, \"reason\": \"...\", \"evidenceIds\": [...]},\n    \"OL\": {\"score\": 1, \"reason\": \"...\", \"evidenceIds\": [...]},\n    \"DE\": {\"score\": 1, \"reason\": \"...\", \"evidenceIds\": [...]},\n    \"LA\": {\"score\": 1, \"reason\": \"...\", \"evidenceIds\": [...]}\n  },\n  \"readiness\": {\n    \"CV\": {\"score\": 1, \"reason\": \"...\", \"evidenceIds\": [...]},\n    \"MR\": {\"score\": 1, \"reason\": \"...\", \"evidenceIds\": [...]},\n    \"MN\": {\"score\": 1, \"reason\": \"...\", \"evidenceIds\": [...]}\n  }\n}\n\n注: scoreは1〜5の整数。reasonは100〜180字。evidenceIdsは抽出済みEvidenceのidのみ。"
     }
 }
 
@@ -587,6 +587,7 @@ def _generate_dummy_scores(evidence: dict):
     for code in COMPETENCY_ORDER:
         label = COMPETENCY_LABELS.get(code, code)
         comp[code] = {
+            "score": 4,
             "reason": f"{label}に関する記述が入力文から確認されました。",
             "evidenceIds": by_target.get(code, [])
         }
@@ -594,6 +595,7 @@ def _generate_dummy_scores(evidence: dict):
     for code in READINESS_ORDER:
         label = READINESS_LABELS.get(code, code)
         ready[code] = {
+            "score": 3,
             "reason": f"{label}に関する記述が入力文から確認されました。",
             "evidenceIds": by_target.get(code, [])
         }
@@ -1518,7 +1520,14 @@ JSON形式で以下を出力:
                             ev_by_target[tgt].append(ev)
 
                     def render_item(block_title, code, label, data_block):
-                        st.markdown(f"### {label}")
+                        # スコア取得（必須化。欠落時はダッシュ表示）
+                        score_val = None
+                        if isinstance(data_block, dict):
+                            score_val = data_block.get("score") or data_block.get("Score")
+                        title_text = f"### {label}"
+                        if isinstance(score_val, (int, float)):
+                            title_text = f"### {label} — {int(score_val)}/5"
+                        st.markdown(title_text)
                         # コメント（理由）
                         reason = ""
                         if isinstance(data_block, dict):
