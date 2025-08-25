@@ -76,12 +76,12 @@ ASSESSMENT_PROMPTS = {
     "pr_norm_ja": {
         "step": "normalize",
         "name": "Normalize JA",
-        "content": "入力テキストを以下のセクションに分類し、各エントリを120字以内で要約してください。出力は JSON: {\"items\":[{\" :[{\"docId\":\"...\",\"section\":\"dept_status|dept_issues|solutions|vision|training_reflection|next1to2y\",\"summary\":\"...\",\"text\":\"...\"}], \"confidence\":\"low|med|high\"} のみ。"
+        "content": "入力テキストを以下のセクションに分類してください。各エントリは (1) summary: 120字以内の要約 と (2) text: 原文抜粋（逐語、改変禁止）を必ず含めます。出力は JSON: {\"items\":[{\"docId\":\"...\",\"section\":\"dept_status|dept_issues|solutions|vision|training_reflection|next1to2y\",\"summary\":\"...\",\"text\":\"...\"}], \"confidence\":\"low|med|high\"} のみ。"
     },
     "pr_evi_ja": {
         "step": "evidence",
         "name": "Evidence JA",
-        "content": "正規化されたテキストから評価根拠を抽出。各抜粋は原文30〜200字、targetは SF|VCI|OL|DE|LA|CV|MR|MN、polarityは pos|neg|neutral。出力は JSON: {\"list\":[{\"id\":\"EV-1\",\"docId\":\"...\",\"polarity\":\"pos\",\"target\":\"DE\",\"quote\":\"...\",\"note\":\"...\"}]} のみ。"
+        "content": "提供された ORIGINAL_TEXT（原文）に基づき評価根拠を抽出。quote は ORIGINAL_TEXT からの逐語抜粋（サブストリング）であり、要約・言い換えは禁止。各抜粋は30〜200字、targetは SF|VCI|OL|DE|LA|CV|MR|MN、polarityは pos|neg|neutral。出力は JSON: {\"list\":[{\"id\":\"EV-1\",\"docId\":\"...\",\"polarity\":\"pos\",\"target\":\"DE\",\"quote\":\"...\",\"note\":\"...\"}]} のみ。"
     },
     "pr_score_ja": {
         "step": "score",
@@ -532,9 +532,15 @@ def _calculate_acquisition_scores(scores):
 def run_assessment_evaluation_pipeline(user_input_df):
     """3ステップの評価パイプラインを実行するオーケストレーター"""
     full_text = ""
+    raw_concat = []
     for _, row in user_input_df.iterrows():
-        if row['あなたの考え'] and row['あなたの考え'].strip():
-            full_text += f"## {row['項目']}\n\n{row['あなたの考え']}\n\n"
+        text_val = row.get('あなたの考え', '') if isinstance(row, dict) else row['あなたの考え']
+        if text_val and str(text_val).strip():
+            # ユーザー原文（逐語）を別途連結
+            raw_concat.append(str(text_val))
+            # 既存の正規化入力用テキストは従来どおり見出し付きで構築
+            full_text += f"## {row['項目']}\n\n{text_val}\n\n"
+    original_text = "\n\n".join(raw_concat)
 
     if not full_text:
         st.warning("入力がありません。")
@@ -568,7 +574,7 @@ def run_assessment_evaluation_pipeline(user_input_df):
             evidence_data = _call_claude(
                 client,
                 ASSESSMENT_PROMPTS["pr_evi_ja"]["content"],
-                f"正規化入力:\n{json.dumps(normalized_data)}"
+                f"正規化入力:\n{json.dumps(normalized_data)}\n---\nORIGINAL_TEXT:\n{original_text}"
             )
             if not evidence_data:
                 st.error("エビデンス抽出に失敗しました")
@@ -1374,34 +1380,40 @@ JSON形式で以下を出力:
                 st.success("✅ API設定済み")
         
         st.header("AIによる昇進アセスメント評価ツール")
-        st.info("以下の表にあなたの考えを入力し、「AI評価を実行する」ボタンを押してください。3ステップのAI評価が実行されます。")
-        
-        # 初期データ
-        initial_data = {
-            "項目": [
-                "部署の現状と課題", "解決策の提案", "今後のビジョン",
-                "研修の振り返り", "今後1-2年の取り組み",
-            ],
-            "あなたの考え": ["", "", "", "", ""]
-        }
-        input_df = pd.DataFrame(initial_data)
-        
-        st.subheader("評価シート")
-        edited_df = st.data_editor(
-            input_df, height=300,
-            column_config={
-                "項目": st.column_config.TextColumn(disabled=True),
-                "あなたの考え": st.column_config.TextColumn(width="large")
-            }, hide_index=True)
-        
+        st.info("課題と実施内容など、評価に必要な情報を1つのテキストボックスにまとめて入力してください。\n入力後に『AI評価を実行する』を押すと3ステップ評価を行います。")
+
+        user_bulk_text = st.text_area(
+            "課題・実施内容（まとめて入力）",
+            height=260,
+            placeholder="例）課題文、取り組み内容、成果、振り返り、今後の計画 などをまとめて記載してください。"
+        )
+
         if st.button("AI評価を実行する", type="primary"):
             if not st.session_state.api_key:
                 st.error("Claude APIキーが設定されていません。サイドバーから設定してください。")
             else:
-                final_evaluation = run_assessment_evaluation_pipeline(edited_df)
+                # 既存パイプラインIFを維持するため、1行のDataFrameに変換
+                df = pd.DataFrame({
+                    "項目": ["全入力"],
+                    "あなたの考え": [user_bulk_text.strip()]
+                })
+                final_evaluation = run_assessment_evaluation_pipeline(df)
                 if final_evaluation:
                     st.header("最終評価結果")
-                    st.json(final_evaluation)
+                    # まずエビデンス（原文抜粋）を簡潔に表示
+                    evidence_list = final_evaluation.get("evidence", {}).get("list", [])
+                    if evidence_list:
+                        st.subheader("抽出エビデンス（原文抜粋）")
+                        for ev in evidence_list:
+                            quote = ev.get("quote", "")
+                            meta = f"[{ev.get('target','')} | {ev.get('polarity','')}] {ev.get('note','')}"
+                            if quote:
+                                st.write(quote)
+                                if meta.strip():
+                                    st.caption(meta)
+                                st.divider()
+                    with st.expander("詳細（JSON全体）"):
+                        st.json(final_evaluation)
 
 if __name__ == "__main__":
     main()
