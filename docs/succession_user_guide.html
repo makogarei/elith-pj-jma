@@ -1,0 +1,372 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>サクセッション評価ツール 初心者向け手順書</title>
+    <style>
+      @page {
+        size: A4;
+        margin: 20mm 15mm;
+      }
+
+      body {
+        font-family: 'メイリオ', 'Meiryo', 'ヒラギノ角ゴ Pro W3', 'Hiragino Kaku Gothic Pro', sans-serif;
+        line-height: 1.8;
+        color: #333;
+        max-width: 210mm;
+        margin: 0 auto;
+        padding: 20px;
+        background: white;
+      }
+
+      h1 {
+        text-align: center;
+        color: #2c3e50;
+        border-bottom: 3px solid #2c3e50;
+        padding-bottom: 15px;
+        margin-bottom: 30px;
+        font-size: 24pt;
+        page-break-after: avoid;
+      }
+
+      h2 {
+        color: #34495e;
+        border-left: 5px solid #3498db;
+        padding-left: 15px;
+        margin-top: 30px;
+        margin-bottom: 20px;
+        font-size: 18pt;
+        page-break-after: avoid;
+        page-break-inside: avoid;
+      }
+
+      h3 {
+        color: #2c3e50;
+        margin-top: 25px;
+        margin-bottom: 15px;
+        font-size: 14pt;
+        page-break-after: avoid;
+      }
+
+      h4 {
+        color: #34495e;
+        margin-top: 20px;
+        margin-bottom: 10px;
+        font-size: 12pt;
+        page-break-after: avoid;
+      }
+
+      .step-box {
+        background-color: #f8f9fa;
+        border: 1px solid #dee2e6;
+        padding: 20px;
+        margin: 15px 0;
+        border-radius: 5px;
+        page-break-inside: avoid;
+      }
+
+      .highlight {
+        background-color: #fff3cd;
+        border: 1px solid #ffeaa7;
+        padding: 10px;
+        margin: 10px 0;
+        border-radius: 3px;
+        page-break-inside: avoid;
+      }
+
+      .important {
+        background-color: #d1ecf1;
+        border: 1px solid #bee5eb;
+        padding: 10px;
+        margin: 10px 0;
+        border-radius: 3px;
+        page-break-inside: avoid;
+      }
+
+      .warning {
+        background-color: #f8d7da;
+        border: 1px solid #f5c6cb;
+        padding: 10px;
+        margin: 10px 0;
+        border-radius: 3px;
+        page-break-inside: avoid;
+      }
+
+      .tip {
+        background-color: #e7f3ff;
+        border-left: 4px solid #2196f3;
+        padding: 15px;
+        margin: 15px 0;
+        page-break-inside: avoid;
+      }
+
+      ol, ul {
+        margin: 15px 0;
+        padding-left: 30px;
+        page-break-inside: avoid;
+      }
+
+      li {
+        margin: 8px 0;
+        orphans: 3;
+        widows: 3;
+      }
+
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        margin: 20px 0;
+        page-break-inside: avoid;
+      }
+
+      th, td {
+        border: 1px solid #dee2e6;
+        padding: 12px;
+        text-align: left;
+      }
+
+      th {
+        background-color: #f8f9fa;
+        font-weight: bold;
+      }
+
+      code {
+        background-color: #f1f3f4;
+        padding: 2px 5px;
+        border-radius: 3px;
+        font-family: 'Courier New', monospace;
+      }
+
+      .page-break {
+        page-break-after: always;
+      }
+
+      .keep-together {
+        page-break-inside: avoid;
+      }
+
+      @media print {
+        body {
+          font-size: 11pt;
+        }
+        .step-box, .highlight, .important, .warning, .tip {
+          break-inside: avoid;
+          page-break-inside: avoid;
+        }
+        h1, h2, h3, h4 {
+          page-break-after: avoid;
+        }
+        img {
+          max-width: 100% !important;
+          height: auto !important;
+          page-break-inside: avoid;
+        }
+        h2 {
+          margin-top: 40px;
+        }
+        li {
+          page-break-inside: avoid;
+        }
+      }
+
+      .emoji {
+        font-family: 'Segoe UI Emoji', 'Apple Color Emoji', 'Noto Color Emoji', sans-serif;
+      }
+    </style>
+</head>
+<body>
+    <h1>📊 サクセッション評価ツール 初心者向け手順書</h1>
+
+    <h2>📌 はじめに</h2>
+    <p>
+      この手順書は、サクセッション評価ツールを初めて使う方向けのガイドです。<br>
+      「設定 → 実行 → 結果確認 → 調整」が迷わず進められるよう、画面構成と操作の流れを説明します。
+    </p>
+
+    <h2>🚀 システムの起動方法</h2>
+
+    <div class="keep-together">
+      <h3>ステップ1：システムにアクセスする</h3>
+      <div class="step-box">
+        <ol>
+          <li>パソコンのブラウザ（Chrome、Edge、Safari 等）を開く</li>
+          <li>URLにアクセス：<code>http://localhost:8501</code>（起動済みの場合）</li>
+          <li>未起動の場合は、端末で <code>streamlit run app.py</code> を実行してからアクセス</li>
+        </ol>
+      </div>
+    </div>
+
+    <div class="keep-together">
+      <h3>ステップ2：最初の画面</h3>
+      <div class="step-box">
+        <p>最初に「<strong>システムを選択してください</strong>」が表示されます。</p>
+        <p><img src="capture_system_select.png" alt="システム選択画面" style="max-width: 100%; height: auto;"></p>
+        <ul>
+          <li>左側：「📚 研修管理システム」ボタン</li>
+          <li>右側：「📊 サクセッション評価」ボタン</li>
+        </ul>
+        <div class="highlight">
+          <p>→ <strong>「サクセッションを使用」をクリック</strong></p>
+        </div>
+      </div>
+    </div>
+
+    <h2>🖼 画面構成</h2>
+
+    <div class="keep-together">
+      <h3>🏠 基本画面の見方</h3>
+      <p>画面は「左：サイドバー」「右：メインタブ」で構成されています。</p>
+
+      <div class="step-box">
+        <h4>左側（サイドバー）</h4>
+        <ul>
+          <li>システム選択に戻る</li>
+          <li>API設定（Claude API Key の登録）</li>
+          <li>ドライラン（ダミー出力）のオン／オフ</li>
+        </ul>
+
+        <h4>右側（メインタブ）</h4>
+        <ul>
+          <li>評価：入力 → 実行 → 結果</li>
+          <li>プロンプト設定：正規化／エビデンス／スコア（共通／項目別ヒント）／プレビュー</li>
+        </ul>
+        <div><p><img src="capture_layout.png" alt="画面構成" style="max-width: 100%; height: auto;"></p></div>
+      </div>
+    </div>
+
+    <h2>✅ はじめての実行</h2>
+
+    <div class="keep-together">
+      <h3>1️⃣ APIキーを設定</h3>
+      <div class="step-box">
+        <ol>
+          <li>左サイドバーの「🔑 API設定」を開く</li>
+          <li>Claude API Key を入力 → 「APIキーを保存」</li>
+          <li>「✅ API設定済み」と表示されれば準備完了</li>
+        </ol>
+        <div class="important">APIキーが未設定でも、<strong>ドライラン（ダミー出力）</strong>で出力形式の確認が可能です。</div>
+      </div>
+    </div>
+
+    <div class="keep-together">
+      <h3>2️⃣ 入力 → 実行</h3>
+      <div class="step-box">
+        <ol>
+          <li>メインの「評価」タブを開く</li>
+          <li>テキストボックスに「課題＋実施内容」をまとめて入力（1ボックス）</li>
+          <li>「AI評価を実行」ボタンをクリック</li>
+        </ol>
+        <div class="highlight">実行フロー：正規化 → エビデンス抽出（原文逐語） → スコアリング（1–5点）</div>
+      </div>
+    </div>
+
+    <div class="keep-together">
+      <h3>3️⃣ 結果を確認</h3>
+      <div class="step-box">
+        <p>結果は「<strong>獲得度</strong>」「<strong>準備度</strong>」の順で表示されます。</p>
+        <ul>
+          <li>各中項目の見出しに <strong>スコア（x/5）</strong> を表示</li>
+          <li><strong>根拠（原文）</strong>：入力原文からの逐語引用（言い換え・要約なし）</li>
+          <li><strong>コメント</strong>：短い評価理由（1〜2段落）</li>
+          <li>詳細（開発者向け）：JSON全体（normalized/evidence/scores）</li>
+        </ul>
+        <table>
+          <thead><tr><th>大項目</th><th>中項目（表示）</th></tr></thead>
+          <tbody>
+            <tr><td>獲得度</td><td>戦略構想力（SF）／価値創出・イノベーション力（VCI）／人的資源・組織運営力（OL）／意思決定・実行力（DE）／学習・適応力（LA）</td></tr>
+            <tr><td>準備度</td><td>キャリアビジョン（CV）／使命感・責任感（MR）／体制・ネットワーク（MN）</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <h2>🧪 ドライラン（ダミー出力）</h2>
+    <div class="keep-together">
+      <div class="step-box">
+        <ul>
+          <li>左サイドバーの「ドライラン（ダミー出力）」にチェック</li>
+          <li>APIを呼ばずに、<strong>本番と同じ表示形式</strong>で結果を確認</li>
+          <li class="highlight">プロンプトの変更効果はドライランに反映されません。形式確認にご利用ください。</li>
+        </ul>
+      </div>
+    </div>
+
+    <h2>📝 プロンプト設定（上級者向け）</h2>
+    <div class="keep-together">
+      <h3>構成</h3>
+      <div class="step-box">
+        <ul>
+          <li><strong>正規化</strong>：JSONのみ返答、summary/text の分離を明示</li>
+          <li><strong>エビデンス</strong>：ORIGINAL_TEXT からの逐語抜粋を強制（サブストリング）／target は SF|VCI|OL|DE|LA|CV|MR|MN</li>
+          <li><strong>スコア（共通）</strong>：各中項目に <code>score(1–5)</code>、<code>reason</code>、<code>evidenceIds</code> を必須化</li>
+          <li><strong>スコア（項目別ヒント）</strong>：各中項目の採点観点（Rubrics）を短文で記述（スコア実行時の User メッセージに結合）</li>
+          <li><strong>プレビュー</strong>：適用中のプロンプトと Rubrics の確認用</li>
+        </ul>
+      </div>
+
+      <h3>編集の影響範囲</h3>
+      <div class="step-box">
+        <ul>
+          <li><strong>正規化</strong>：後続ステップの下地が変わります（要約しすぎに注意）</li>
+          <li><strong>エビデンス</strong>：根拠の精度・件数・粒度に影響（逐語抜粋の指示は保持）</li>
+          <li><strong>スコア（共通）</strong>：返却 JSON 構造に影響（必須フィールドは維持）</li>
+          <li><strong>項目別ヒント</strong>：採点観点のチューニング（出力形式は不変）</li>
+        </ul>
+        <div class="tip">編集内容は「評価」タブで実行したタイミングで適用されます。</div>
+      </div>
+    </div>
+
+    <h2>🔧 トラブルシューティング</h2>
+
+    <div class="keep-together">
+      <h3>よくある問題と対処</h3>
+      <div class="step-box">
+        <h4>Q1：APIエラーが出る／結果が返らない</h4>
+        <p><strong>A：</strong>APIキーを再確認。失敗時は自動でダミーに切替わるため、画面の案内を確認。</p>
+
+        <h4>Q2：エビデンス（原文）が表示されない</h4>
+        <p><strong>A：</strong>入力の具体性が不足している可能性。エビデンス抽出プロンプトの条件が厳しすぎないかも確認。</p>
+
+        <h4>Q3：スコアが欠落している</h4>
+        <p><strong>A：</strong>スコア（共通）で <code>score/reason/evidenceIds</code> が必須であることを再確認。</p>
+
+        <h4>Q4：プロンプトの変更が反映されない</h4>
+        <p><strong>A：</strong>ドライラン中ではないか確認。「プレビュー」で内容確認→本番実行で効果を検証。</p>
+      </div>
+    </div>
+
+    <h2>💡 便利な使い方のコツ</h2>
+    <div class="keep-together">
+      <div class="step-box">
+        <ol>
+          <li><strong>まずはドライランで形式確認</strong>：API消費なしで画面と出力形を把握</li>
+          <li><strong>小さく回す</strong>：短い入力で1件試し、Rubricsを微調整→再実行</li>
+          <li><strong>Rubricsは短く具体的に</strong>：1–3行/項目。重視点とNG例を簡潔に</li>
+        </ol>
+      </div>
+    </div>
+
+    <h2>📎 付録：項目対応表</h2>
+    <table>
+      <thead><tr><th>コード</th><th>表示名</th><th>区分</th></tr></thead>
+      <tbody>
+        <tr><td>SF</td><td>戦略構想力</td><td>獲得度</td></tr>
+        <tr><td>VCI</td><td>価値創出・イノベーション力</td><td>獲得度</td></tr>
+        <tr><td>OL</td><td>人的資源・組織運営力</td><td>獲得度</td></tr>
+        <tr><td>DE</td><td>意思決定・実行力</td><td>獲得度</td></tr>
+        <tr><td>LA</td><td>学習・適応力</td><td>獲得度</td></tr>
+        <tr><td>CV</td><td>キャリアビジョン</td><td>準備度</td></tr>
+        <tr><td>MR</td><td>使命感・責任感</td><td>準備度</td></tr>
+        <tr><td>MN</td><td>体制・ネットワーク</td><td>準備度</td></tr>
+      </tbody>
+    </table>
+
+    <h2>推奨環境</h2>
+    <ul>
+      <li><strong>ブラウザ</strong>：Chrome、Edge、Safari の最新版</li>
+      <li><strong>インターネット</strong>：安定した接続環境（本番実行時）</li>
+    </ul>
+</body>
+</html>
+
