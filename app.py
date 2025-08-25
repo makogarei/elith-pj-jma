@@ -43,6 +43,8 @@ if 'api_key' not in st.session_state:
     st.session_state.api_key = st.secrets["CLAUDE_API_KEY"]
 if 'exclude_keywords' not in st.session_state:
     st.session_state.exclude_keywords = []
+if 'dry_run' not in st.session_state:
+    st.session_state.dry_run = False
 if 'evaluation_prompt_template' not in st.session_state:
     st.session_state.evaluation_prompt_template = """以下の受講者の事前課題回答とまとめシートを基に、8つの評価基準それぞれについて5点満点で評価してください。
 
@@ -545,6 +547,76 @@ def _calculate_acquisition_scores(scores):
         acq_scores[acq_name] = round(total_score)
     return acq_scores
 
+# === ダミー生成ユーティリティ ===
+def _generate_dummy_evidence(original_text: str):
+    try:
+        import re
+        # 文切り出し（簡易）
+        sentences = [s.strip() for s in re.split(r"[。\n\r]", original_text or "") if s.strip()]
+        if not sentences:
+            chunk = (original_text or "入力がありません").strip()
+            sentences = [chunk[:80]]
+        ev_list = []
+        codes = COMPETENCY_ORDER + READINESS_ORDER
+        for i, code in enumerate(codes):
+            sent = sentences[i % len(sentences)]
+            if not sent:
+                sent = "（ダミー）入力文からの抜粋"
+            ev_list.append({
+                "id": f"EV-{code}-{i+1}",
+                "target": code,
+                "quote": sent
+            })
+        return {"list": ev_list}
+    except Exception:
+        # 最低限のフォールバック
+        ev_list = []
+        for i, code in enumerate(COMPETENCY_ORDER + READINESS_ORDER):
+            ev_list.append({"id": f"EV-{code}-{i+1}", "target": code, "quote": "（ダミー）原文抜粋"})
+        return {"list": ev_list}
+
+def _generate_dummy_scores(evidence: dict):
+    ev_list = evidence.get("list", []) if isinstance(evidence, dict) else []
+    by_target = {code: [] for code in (COMPETENCY_ORDER + READINESS_ORDER)}
+    for ev in ev_list:
+        tgt = ev.get("target")
+        if tgt in by_target:
+            by_target[tgt].append(ev.get("id"))
+
+    comp = {}
+    for code in COMPETENCY_ORDER:
+        label = COMPETENCY_LABELS.get(code, code)
+        comp[code] = {
+            "reason": f"{label}に関する記述が入力文から確認されました。",
+            "evidenceIds": by_target.get(code, [])
+        }
+    ready = {}
+    for code in READINESS_ORDER:
+        label = READINESS_LABELS.get(code, code)
+        ready[code] = {
+            "reason": f"{label}に関する記述が入力文から確認されました。",
+            "evidenceIds": by_target.get(code, [])
+        }
+    return {"competencies": comp, "readiness": ready}
+
+def _generate_dummy_normalized(original_text: str):
+    return {
+        "items": [
+            {"docId": "D-1", "section": "summary", "summary": "入力内容のダミー要約", "text": (original_text or "")[:120]}
+        ],
+        "confidence": "low"
+    }
+
+def _generate_dummy_assessment(full_text: str, original_text: str):
+    evidence = _generate_dummy_evidence(original_text)
+    scores = _generate_dummy_scores(evidence)
+    return {
+        "normalized": _generate_dummy_normalized(original_text),
+        "evidence": evidence,
+        "scores": scores,
+        "meta": {"dummy": True}
+    }
+
 def run_assessment_evaluation_pipeline(user_input_df):
     """3ステップの評価パイプラインを実行するオーケストレーター"""
     full_text = ""
@@ -564,9 +636,10 @@ def run_assessment_evaluation_pipeline(user_input_df):
 
     try:
         client = get_client()
-        if not client:
-            st.error("APIキーが設定されていません")
-            return None
+        # ドライランまたはAPIキー未設定時はダミー出力へ
+        if st.session_state.get('dry_run') or not client:
+            st.info("ドライラン（ダミー出力）で実行します。")
+            return _generate_dummy_assessment(full_text, original_text)
             
         final_result = {}
 
@@ -580,8 +653,8 @@ def run_assessment_evaluation_pipeline(user_input_df):
                 f"入力データ(JSON):\n{json.dumps({'input': {'text': full_text}})}"
             )
             if not normalized_data:
-                st.error("正規化処理に失敗しました")
-                return None
+                st.warning("正規化処理に失敗しました。ダミー出力に切替えます。")
+                return _generate_dummy_assessment(full_text, original_text)
             final_result["normalized"] = normalized_data
             st.success("ステップ1/3: 正規化完了")
 
@@ -593,8 +666,8 @@ def run_assessment_evaluation_pipeline(user_input_df):
                 f"正規化入力:\n{json.dumps(normalized_data)}\n---\nORIGINAL_TEXT:\n{original_text}"
             )
             if not evidence_data:
-                st.error("エビデンス抽出に失敗しました")
-                return None
+                st.warning("エビデンス抽出に失敗しました。ダミー出力に切替えます。")
+                return _generate_dummy_assessment(full_text, original_text)
             final_result["evidence"] = evidence_data
             st.success("ステップ2/3: エビデンス抽出完了")
 
@@ -608,8 +681,8 @@ def run_assessment_evaluation_pipeline(user_input_df):
             )
             
             if not scores:
-                st.error("スコア算出に失敗しました")
-                return None
+                st.warning("コメント算出に失敗しました。ダミー出力に切替えます。")
+                return _generate_dummy_assessment(full_text, original_text)
                 
             acquisition_scores = _calculate_acquisition_scores(scores)
             scores["acquisition"] = acquisition_scores
@@ -681,6 +754,13 @@ def main():
                 st.warning("⚠️ APIキーを設定してください")
             else:
                 st.success("✅ API設定済み")
+            # ドライラン切替
+            st.divider()
+            st.session_state.dry_run = st.checkbox(
+                "ドライラン（ダミー出力）",
+                value=st.session_state.get('dry_run', False),
+                help="APIを使わずダミー結果で画面表示と形式を確認します"
+            )
             
             st.divider()
             
