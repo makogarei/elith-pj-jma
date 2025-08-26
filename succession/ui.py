@@ -84,9 +84,15 @@ def render_assessment_ui():
 
         if st.button("AI評価を実行する", type="primary"):
             raw_text = user_bulk_text.strip()
+            if not raw_text:
+                st.warning("入力がありません。テキストを入力してください。")
+                return
             final_evaluation = spipe.run_pipeline(raw_text, scfg.build_config(), st.session_state.api_key)
-            if final_evaluation:
-                st.header("最終評価結果")
+            if not final_evaluation:
+                st.warning("結果を生成できませんでした。APIキーやドライラン設定を確認して再実行してください。")
+                return
+
+            st.header("最終評価結果")
 
             scores = final_evaluation.get("scores", {}) or {}
             evidence_list = final_evaluation.get("evidence", {}).get("list", []) or []
@@ -139,22 +145,22 @@ def render_assessment_ui():
                     st.write("コメント")
                     st.write(reason)
 
-                # 獲得度
-                st.subheader("獲得度")
-                comp = scores.get("competencies", {}) or {}
-                for code in COMPETENCY_ORDER:
-                    render_item(code, COMPETENCY_LABELS.get(code, code), comp.get(code, {}))
-                    st.divider()
+            # 獲得度
+            st.subheader("獲得度")
+            comp = scores.get("competencies", {}) or {}
+            for code in COMPETENCY_ORDER:
+                render_item(code, COMPETENCY_LABELS.get(code, code), comp.get(code, {}))
+                st.divider()
 
-                # 準備度
-                st.subheader("準備度")
-                ready = scores.get("readiness", {}) or {}
-                for code in READINESS_ORDER:
-                    render_item(code, READINESS_LABELS.get(code, code), ready.get(code, {}))
-                    st.divider()
+            # 準備度
+            st.subheader("準備度")
+            ready = scores.get("readiness", {}) or {}
+            for code in READINESS_ORDER:
+                render_item(code, READINESS_LABELS.get(code, code), ready.get(code, {}))
+                st.divider()
 
-                with st.expander("詳細（JSON全体）"):
-                    st.json(final_evaluation)
+            with st.expander("詳細（JSON全体）"):
+                st.json(final_evaluation)
 
     with tabs[1]:
         render_prompts_panel()
