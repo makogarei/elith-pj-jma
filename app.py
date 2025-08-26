@@ -704,7 +704,7 @@ def run_assessment_evaluation_pipeline(user_input_df):
 def main():
     # タイトルはモードに応じて表示名を切り替える
     if st.session_state.system_mode == "assessment":
-        st.title("📊 サクセッション評価")
+        st.title("📊 サクセッション評価01")
     elif st.session_state.system_mode == "training":
         st.title("📚 研修管理システム")
     else:
@@ -724,7 +724,7 @@ def main():
                 st.rerun()
         
         with col2:
-            st.subheader("📊 サクセッション評価")
+            st.subheader("📊 サクセッション評価01")
             st.write("サクセッション評価を3ステップで実行します。")
             if st.button("サクセッションを使用", type="primary", use_container_width=True):
                 st.session_state.system_mode = "assessment"
