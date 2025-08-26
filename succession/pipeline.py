@@ -1,6 +1,7 @@
 from __future__ import annotations
-from typing import Any, Dict
+from typing import Any, Dict, Callable, Optional
 import json
+import time
 
 
 def _call_claude(client, system_prompt: str, user_content: str) -> Dict | None:
@@ -21,7 +22,12 @@ def _call_claude(client, system_prompt: str, user_content: str) -> Dict | None:
         return None
 
 
-def run_pipeline(raw_text: str, cfg: Dict[str, Any], api_key: str | None) -> Dict:
+def run_pipeline(
+    raw_text: str,
+    cfg: Dict[str, Any],
+    api_key: str | None,
+    reporter: Optional[Callable[[str, str, Dict[str, Any]], None]] = None,
+) -> Dict:
     from .dummy import generate_dummy_assessment
     import anthropic
 
@@ -30,29 +36,49 @@ def run_pipeline(raw_text: str, cfg: Dict[str, Any], api_key: str | None) -> Dic
 
     # Dry-run or no key → dummy
     if cfg.get('flags', {}).get('dry_run') or not api_key:
+        if reporter:
+            reporter("dry_run", "start", {})
+            reporter("dry_run", "success", {})
         return generate_dummy_assessment(raw_text)
 
     client = anthropic.Anthropic(api_key=api_key)
 
     # Step 1: normalize
+    if reporter:
+        reporter("normalize", "start", {})
+    t0 = time.monotonic()
     norm = _call_claude(
         client,
         cfg['prompts']['norm'],
         f"入力データ(JSON):\n{json.dumps({'input': {'text': raw_text}})}",
     )
     if not norm:
+        if reporter:
+            reporter("normalize", "failure", {"elapsed_sec": round(time.monotonic()-t0, 2)})
         return generate_dummy_assessment(raw_text)
+    if reporter:
+        reporter("normalize", "success", {"elapsed_sec": round(time.monotonic()-t0, 2)})
 
     # Step 2: evidence (include ORIGINAL_TEXT)
+    if reporter:
+        reporter("evidence", "start", {})
+    t1 = time.monotonic()
     evid = _call_claude(
         client,
         cfg['prompts']['evidence'],
         f"正規化入力:\n{json.dumps(norm)}\n---\nORIGINAL_TEXT:\n{raw_text}",
     )
     if not evid:
+        if reporter:
+            reporter("evidence", "failure", {"elapsed_sec": round(time.monotonic()-t1, 2)})
         return generate_dummy_assessment(raw_text)
+    if reporter:
+        reporter("evidence", "success", {"elapsed_sec": round(time.monotonic()-t1, 2)})
 
     # Step 3: score with rubrics
+    if reporter:
+        reporter("score", "start", {})
+    t2 = time.monotonic()
     score_user_content = f"正規化入力:\n{json.dumps(norm)}\n---\nエビデンス:\n{json.dumps(evid)}\n---\nRUBRICS:\n{cfg.get('rubrics_text','')}"
     scores = _call_claude(
         client,
@@ -60,7 +86,10 @@ def run_pipeline(raw_text: str, cfg: Dict[str, Any], api_key: str | None) -> Dic
         score_user_content,
     )
     if not scores:
+        if reporter:
+            reporter("score", "failure", {"elapsed_sec": round(time.monotonic()-t2, 2)})
         return generate_dummy_assessment(raw_text)
+    if reporter:
+        reporter("score", "success", {"elapsed_sec": round(time.monotonic()-t2, 2)})
 
     return {"normalized": norm, "evidence": evid, "scores": scores}
-

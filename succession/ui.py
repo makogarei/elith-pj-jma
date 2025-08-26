@@ -87,7 +87,38 @@ def render_assessment_ui():
             if not raw_text:
                 st.warning("入力がありません。テキストを入力してください。")
                 return
-            final_evaluation = spipe.run_pipeline(raw_text, scfg.build_config(), st.session_state.api_key)
+            # Progress and status placeholders
+            prog = st.progress(0)
+            status = st.empty()
+            logs = st.container()
+
+            step_order = ["normalize", "evidence", "score"]
+            step_index = {name: idx for idx, name in enumerate(step_order, start=1)}
+
+            def reporter(step: str, stage: str, meta: Dict[str, Any]):
+                # Update progress roughly by step completion
+                if stage == "start":
+                    status.info(f"ステップ開始: {step}")
+                elif stage == "success":
+                    idx = step_index.get(step, 0)
+                    prog.progress(min(int(idx/len(step_order)*100), 99))
+                    elapsed = meta.get("elapsed_sec")
+                    with logs:
+                        if elapsed is not None:
+                            st.write(f"✅ {step} 完了（{elapsed}s）")
+                        else:
+                            st.write(f"✅ {step} 完了")
+                elif stage == "failure":
+                    with logs:
+                        st.error(f"{step} でエラーが発生。ダミー出力に切替えます。")
+                elif step == "dry_run" and stage == "start":
+                    with logs:
+                        st.info("ドライラン（ダミー出力）で実行します。")
+
+            cfg = scfg.build_config()
+            final_evaluation = spipe.run_pipeline(raw_text, cfg, st.session_state.api_key, reporter=reporter)
+            prog.progress(100)
+            status.empty()
             if not final_evaluation:
                 st.warning("結果を生成できませんでした。APIキーやドライラン設定を確認して再実行してください。")
                 return
