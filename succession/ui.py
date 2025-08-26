@@ -3,6 +3,8 @@ import json
 import streamlit as st
 import pandas as pd
 from typing import Any, Dict
+import platform
+import subprocess
 
 from .constants import COMPETENCY_ORDER, READINESS_ORDER, COMPETENCY_LABELS, READINESS_LABELS
 from . import config as scfg
@@ -71,7 +73,7 @@ def render_assessment_ui():
 
     # Main body with tabs like 集合研修: 評価 / プロンプト設定
     st.header("サクセッション評価ツール")
-    tabs = st.tabs(["評価", "プロンプト設定"])
+    tabs = st.tabs(["評価", "プロンプト設定", "診断"])
 
     with tabs[0]:
         st.info("課題と実施内容など、評価に必要な情報を1つのテキストボックスにまとめて入力してください。\n入力後に『AI評価を実行する』を押すと3ステップ評価を行います。")
@@ -195,3 +197,38 @@ def render_assessment_ui():
 
     with tabs[1]:
         render_prompts_panel()
+
+    with tabs[2]:
+        st.subheader("診断（ヘルスチェック）")
+
+        # ビルド情報
+        sha = "unknown"
+        ts = "unknown"
+        try:
+            sha = subprocess.run(["git", "rev-parse", "--short", "HEAD"], capture_output=True, text=True).stdout.strip() or "unknown"
+            ts = subprocess.run(["git", "log", "-1", "--date=iso-local", "--pretty=format:%ad"], capture_output=True, text=True).stdout.strip() or "unknown"
+        except Exception:
+            pass
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("デプロイSHA", sha)
+        with col2:
+            st.metric("コミット日時", ts)
+        with col3:
+            st.metric("Python", platform.python_version())
+
+        st.divider()
+        st.write("自己診断（ドライランで形を確認）")
+        if st.button("ドライラン自己診断を実行"):
+            sample = "サンプル入力: 戦略と実行計画、学習の振り返りを含む。"
+            cfg = scfg.build_config()
+            # 強制ドライランで診断（ユーザー設定を汚さない）
+            cfg = {**cfg, "flags": {**cfg.get("flags", {}), "dry_run": True}}
+            result = spipe.run_pipeline(sample, cfg, api_key=None)
+            ok = bool(result and result.get("scores") and result.get("evidence"))
+            if ok:
+                st.success("✅ ドライラン自己診断: OK（構造を確認）")
+            else:
+                st.error("❌ ドライラン自己診断: 失敗（結果構造を取得できませんでした）")
+            with st.expander("診断結果（JSON）"):
+                st.json(result or {})
