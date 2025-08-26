@@ -1,0 +1,536 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>研修管理システム 初心者向け手順書</title>
+    <style>
+      @page {
+        size: A4;
+        margin: 20mm 15mm;
+      }
+
+      body {
+        font-family: 'メイリオ', 'Meiryo', 'ヒラギノ角ゴ Pro W3', 'Hiragino Kaku Gothic Pro', sans-serif;
+        line-height: 1.8;
+        color: #333;
+        max-width: 210mm;
+        margin: 0 auto;
+        padding: 20px;
+        background: white;
+      }
+
+      h1 {
+        text-align: center;
+        color: #2c3e50;
+        border-bottom: 3px solid #2c3e50;
+        padding-bottom: 15px;
+        margin-bottom: 30px;
+        font-size: 24pt;
+        page-break-after: avoid;
+      }
+
+      h2 {
+        color: #34495e;
+        border-left: 5px solid #3498db;
+        padding-left: 15px;
+        margin-top: 30px;
+        margin-bottom: 20px;
+        font-size: 18pt;
+        page-break-after: avoid;
+        page-break-inside: avoid;
+      }
+
+      h3 {
+        color: #2c3e50;
+        margin-top: 25px;
+        margin-bottom: 15px;
+        font-size: 14pt;
+        page-break-after: avoid;
+      }
+
+      h4 {
+        color: #34495e;
+        margin-top: 20px;
+        margin-bottom: 10px;
+        font-size: 12pt;
+        page-break-after: avoid;
+      }
+
+      .step-box {
+        background-color: #f8f9fa;
+        border: 1px solid #dee2e6;
+        padding: 20px;
+        margin: 15px 0;
+        border-radius: 5px;
+        page-break-inside: avoid;
+      }
+
+      .highlight {
+        background-color: #fff3cd;
+        border: 1px solid #ffeaa7;
+        padding: 10px;
+        margin: 10px 0;
+        border-radius: 3px;
+        page-break-inside: avoid;
+      }
+
+      .important {
+        background-color: #d1ecf1;
+        border: 1px solid #bee5eb;
+        padding: 10px;
+        margin: 10px 0;
+        border-radius: 3px;
+        page-break-inside: avoid;
+      }
+
+      .warning {
+        background-color: #f8d7da;
+        border: 1px solid #f5c6cb;
+        padding: 10px;
+        margin: 10px 0;
+        border-radius: 3px;
+        page-break-inside: avoid;
+      }
+
+      .tip {
+        background-color: #e7f3ff;
+        border-left: 4px solid #2196f3;
+        padding: 15px;
+        margin: 15px 0;
+        page-break-inside: avoid;
+      }
+
+      ol, ul {
+        margin: 15px 0;
+        padding-left: 30px;
+        page-break-inside: avoid;
+      }
+
+      li {
+        margin: 8px 0;
+        orphans: 3;
+        widows: 3;
+      }
+
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        margin: 20px 0;
+        page-break-inside: avoid;
+      }
+
+      th, td {
+        border: 1px solid #dee2e6;
+        padding: 12px;
+        text-align: left;
+      }
+
+      th {
+        background-color: #f8f9fa;
+        font-weight: bold;
+      }
+
+      code {
+        background-color: #f1f3f4;
+        padding: 2px 5px;
+        border-radius: 3px;
+        font-family: 'Courier New', monospace;
+      }
+
+      .page-break {
+        page-break-after: always;
+      }
+
+      .keep-together {
+        page-break-inside: avoid;
+      }
+
+      /* 印刷時のスタイル */
+      @media print {
+        body {
+          font-size: 11pt;
+        }
+        
+        .step-box, .highlight, .important, .warning, .tip {
+          break-inside: avoid;
+          page-break-inside: avoid;
+        }
+        
+        h1, h2, h3, h4 {
+          page-break-after: avoid;
+        }
+        
+        img {
+          max-width: 100% !important;
+          height: auto !important;
+          page-break-inside: avoid;
+        }
+        
+        /* 各セクションの開始位置を調整 */
+        h2 {
+          margin-top: 40px;
+        }
+        
+        /* リストアイテムが分割されないように */
+        li {
+          page-break-inside: avoid;
+        }
+      }
+
+      .emoji {
+        font-family: 'Segoe UI Emoji', 'Apple Color Emoji', 'Noto Color Emoji', sans-serif;
+      }
+    </style>
+</head>
+<body>
+    <h1>📚 研修管理システム手順書</h1>
+
+    <h2>📌 はじめに</h2>
+    <p>
+      この手順書は、研修管理システムを初めて使う方のための詳しいガイドです。<br>
+      画面の見方から具体的な操作まで、一つずつ丁寧に説明します。
+    </p>
+
+    <h2>🚀 システムの起動方法</h2>
+
+    <div class="keep-together">
+      <h3>ステップ1：システムにアクセスする</h3>
+      <div class="step-box">
+        <ol>
+          <li>パソコンのブラウザ（Chrome、Edge、Safari等）を開く</li>
+          <li>システムのURLにアクセスする</li>
+          <li>画面が表示されるまで待つ（5-10秒程度）</li>
+        </ol>
+      </div>
+    </div>
+
+    <div class="keep-together">
+      <h3>ステップ2：最初の画面</h3>
+      <div class="step-box">
+        <p>システムを開くと「<strong>システムを選択してください</strong>」という画面が表示されます。</p>
+        <p><img src="キャプチャ1.PNG" alt="システム選択画面" style="max-width: 100%; height: auto;"></p>
+        <ul>
+          <li>左側：「📚 研修管理システム」ボタン</li>
+          <li>右側：「📊 昇進アセスメント評価」ボタン</li>
+        </ul>
+        <div class="highlight">
+          <p>→ <strong>「研修管理システムを使用」ボタンをクリック</strong></p>
+        </div>
+      </div>
+    </div>
+
+    <h2>📚 研修管理システムの使い方</h2>
+
+    <div class="keep-together">
+      <h3>🏠 基本画面の見方</h3>
+      <p>画面は大きく2つの部分に分かれています：</p>
+
+      <div class="step-box">
+        <h4>左側（サイドバー）</h4>
+        <ul>
+          <li>システム選択に戻るボタン</li>
+          <li>APIキーの状態表示</li>
+          <li>機能メニュー（5つの選択肢）</li>
+        </ul>
+
+        <h4>右側（メイン画面）</h4>
+        <ul>
+          <li>選択した機能の操作画面</li>
+        </ul>
+        <div><p><img src="キャプチャ2.PNG" alt="基本画面の構成" style="max-width: 100%; height: auto;"></p></div>
+      </div>
+    </div>
+
+    <h2>📋 各機能の詳しい使い方</h2>
+
+    <div class="keep-together">
+      <h3>1️⃣ 講座情報入力（最初にここから始めます）</h3>
+
+      <h4>目的</h4>
+      <p>研修の基本情報を登録します</p>
+
+      <h4>手順</h4>
+      <div class="step-box">
+        <h4>ステップ1：機能を選択</h4>
+        <ol>
+          <li>左側メニューで「講座情報入力」をクリック</li>
+        </ol>
+
+        <h4>ステップ2：講座URLを入力</h4>
+        <ol>
+          <li>「講座URL」の入力欄を見つける</li>
+          <li>
+            研修のウェブページのURLをコピーして貼り付ける
+            <ul>
+              <li>例：<code>https://school.jma.or.jp/products/detail.php?product_id=100132</code></li>
+            </ul>
+          </li>
+          <li>必要に応じて、研修資料のPDFファイルをアップロード（任意）</li>
+        </ol>
+
+        <h4>ステップ3：情報を取得</h4>
+        <ol>
+          <li>青い「講座情報を取得」ボタンをクリック</li>
+          <li>「講座情報を取得中...」と表示されるので待つ</li>
+          <li>「✅ 講座情報を取得しました」と表示されたら成功</li>
+        </ol>
+
+        <h4>ステップ4：受講者を登録</h4>
+        <ol>
+          <li>画面右側の「受講者情報」エリアを見る</li>
+          <li>
+            以下を入力：
+            <ul>
+              <li>受講者名：研修を受ける人の名前（例：山田太郎）</li>
+              <li>受講者ID：社員番号など（例：EMP001）</li>
+              <li>所属部署：部署名（例：営業部）</li>
+            </ul>
+          </li>
+          <li>「受講者を追加」ボタンをクリック</li>
+          <li>「✅ 受講者「○○」を追加しました」と表示されたら成功</li>
+        </ol>
+        <div>最終的に下記のように講座情報と受講者が一覧に登録されていればOKです。</div>
+        <div><img src="キャプチャ3.PNG" alt="講座情報入力完了画面" style="max-width: 100%; height: auto;"></div>
+      </div>
+    </div>
+
+    <div class="keep-together">
+      <h3>2️⃣ 事前課題作成</h3>
+
+      <h4>目的</h4>
+      <p>受講者に事前に考えてもらう課題を作成します</p>
+
+      <h4>手順</h4>
+      <div class="step-box">
+        <h4>ステップ1：機能を選択</h4>
+        <ol>
+          <li>左側メニューで「事前課題作成」をクリック</li>
+        </ol>
+
+        <h4>ステップ2：受講者を選択</h4>
+        <ol>
+          <li>
+            ドロップダウンメニューから受講者を選ぶ
+            <ul>
+              <li>登録した受講者の名前が表示されます</li>
+            </ul>
+          </li>
+        </ol>
+
+        <h4>ステップ3：課題を生成</h4>
+        <ol>
+          <li>「事前課題を生成」ボタンをクリック</li>
+          <li>「事前課題を生成中...」と表示されるので待つ（30秒程度）</li>
+          <li>「✅ 事前課題を生成しました」と表示されたら成功</li>
+        </ol>
+
+        <h4>ステップ4：回答を入力（受講者または管理者が記入）</h4>
+        <ol>
+          <li>8つの管理項目のタブが表示される</li>
+          <li>
+            各タブをクリックして、以下を入力：
+            <ul>
+              <li>①何が問題だと思っているのか</li>
+              <li>②どうすれば良いと思うか</li>
+            </ul>
+          </li>
+          <li>すべての項目に回答を入力</li>
+        </ol>
+
+        <h4>ステップ5：保存</h4>
+        <ol>
+          <li>「💾 回答を保存」ボタンをクリック</li>
+          <li>「✅ 回答を保存しました」と表示されたら成功</li>
+        </ol>
+        <div>最終的に下記のように事前課題が表示され、入力後に保存できていればOKです。</div>
+        <div><p><img src="キャプチャ4.PNG" alt="事前課題作成完了画面" style="max-width: 100%; height: auto;"></p></div>
+      </div>
+
+      <div class="tip">
+        <p><strong>💡 便利機能</strong><br>
+        「🤖 ダミーデータ作成」ボタンで、サンプル回答を一括で自動生成できます</p>
+      </div>
+    </div>
+
+    <div class="keep-together">
+      <h3>3️⃣ まとめシート</h3>
+
+      <h4>目的</h4>
+      <p>研修で学んだことをまとめます</p>
+
+      <h4>手順</h4>
+      <div class="step-box">
+        <h4>ステップ1：機能を選択</h4>
+        <ol>
+          <li>左側メニューで「まとめシート」をクリック</li>
+        </ol>
+
+        <h4>ステップ2：受講者を選択</h4>
+        <ol>
+          <li>ドロップダウンメニューから受講者を選ぶ</li>
+        </ol>
+
+        <h4>ステップ3：各項目を入力</h4>
+        <p>入力する項目：</p>
+        <ol>
+          <li>
+            <strong>受講者への期待</strong>（講師から）
+            <ul>
+              <li>研修で習得してほしいこと</li>
+            </ul>
+          </li>
+          <li>
+            <strong>事前期待</strong>（受講者から）
+            <ul>
+              <li>研修で学びたいこと</li>
+            </ul>
+          </li>
+          <li>
+            <strong>学習項目</strong>（7つのタブ）
+            <ul>
+              <li>各テーマで学んだ内容を記載</li>
+            </ul>
+          </li>
+          <li>
+            <strong>職場で実践すること</strong>（2つ）
+            <ul>
+              <li>テーマ名と具体的な実践内容</li>
+            </ul>
+          </li>
+        </ol>
+
+        <h4>ステップ4：保存</h4>
+        <ol>
+          <li>「💾 まとめシートを保存」ボタンをクリック</li>
+          <li>「✅ まとめシートを保存しました」と表示されたら成功</li>
+        </ol>
+      </div>
+    </div>
+
+    <div class="keep-together">
+      <h3>4️⃣ 受講者評価</h3>
+
+      <h4>目的</h4>
+      <p>AIが自動的に受講者を評価します</p>
+
+      <h4>前提条件</h4>
+      <ul>
+        <li>事前課題の回答が保存済み</li>
+        <li>まとめシートが保存済み</li>
+      </ul>
+
+      <h4>手順</h4>
+      <div class="step-box">
+        <h4>ステップ1：機能を選択</h4>
+        <ol>
+          <li>左側メニューで「受講者評価」をクリック</li>
+        </ol>
+
+        <h4>ステップ2：受講者を選択</h4>
+        <ol>
+          <li>ドロップダウンメニューから受講者を選ぶ</li>
+          <li>
+            以下の状態を確認：
+            <ul>
+              <li>✅ 事前課題：完了</li>
+              <li>✅ まとめシート：完了</li>
+            </ul>
+          </li>
+        </ol>
+
+        <h4>ステップ3：評価を実行</h4>
+        <ol>
+          <li>「AI評価を実行」ボタンをクリック</li>
+          <li>「評価を生成中...」と表示されるので待つ（30秒程度）</li>
+          <li>「評価を完了しました」と表示されたら成功</li>
+        </ol>
+
+        <h4>ステップ4：結果を確認</h4>
+        <ul>
+          <li>総合スコア（40点満点）</li>
+          <li>平均スコア（5点満点）</li>
+          <li>達成率（パーセント表示）</li>
+          <li>各評価項目の詳細（クリックで展開）</li>
+          <li>総合フィードバック</li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="keep-together">
+      <h3>5️⃣ 評価設定（上級者向け）</h3>
+
+      <h4>目的</h4>
+      <p>評価の詳細設定をカスタマイズします</p>
+
+      <h4>主な機能</h4>
+      <div class="step-box">
+        <h4>除外キーワード設定</h4>
+        <ul>
+          <li>評価時に無視する単語を設定</li>
+        </ul>
+
+        <h4>評価プロンプト設定</h4>
+        <ul>
+          <li>AI評価の動作をカスタマイズ</li>
+          <li>現在のプロンプトの中身を編集することで、評価の特色を持たせることが可能になります</li>
+          <li>例：事前課題回答を重点的に評価したい場合は、デフォルトのプロンプトに「事前課題回答を重点的に評価してください」などの指示を追加してください</li>
+        </ul>
+      </div>
+    </div>
+
+    <h2>🔧 トラブルシューティング</h2>
+
+    <div class="keep-together">
+      <h3>よくある問題と解決方法</h3>
+      <div class="step-box">
+        <h4>Q1：講座情報が取得できない</h4>
+        <p><strong>A：</strong>URLが正しいか確認し、インターネット接続を確認してください</p>
+
+        <h4>Q2：評価ボタンが押せない</h4>
+        <p><strong>A：</strong>事前課題とまとめシートの両方が保存済みか確認してください</p>
+
+        <h4>Q3：エラーメッセージが表示される</h4>
+        <p><strong>A：</strong>画面をリロード（F5キー）して、最初からやり直してください</p>
+      </div>
+    </div>
+
+    <h2>💡 便利な使い方のコツ</h2>
+
+    <div class="keep-together">
+      <h3>初めて使う時の推奨手順</h3>
+      <div class="step-box">
+        <ol>
+          <li>
+            <strong>テストモードで練習</strong>
+            <ul>
+              <li>ダミーデータ機能を使って操作に慣れる</li>
+              <li>全体の流れを把握する</li>
+            </ul>
+          </li>
+          <li>
+            <strong>1人分から始める</strong>
+            <ul>
+              <li>最初は受講者1人分だけ登録</li>
+              <li>全工程を完了させる</li>
+              <li>慣れたら複数人を管理</li>
+            </ul>
+          </li>
+          <li>
+            <strong>こまめに保存</strong>
+            <ul>
+              <li>各画面で入力したら必ず保存ボタンを押す</li>
+              <li>保存完了メッセージを確認する</li>
+            </ul>
+          </li>
+        </ol>
+      </div>
+    </div>
+
+    <h2>推奨環境</h2>
+    <ul>
+      <li><strong>ブラウザ</strong>：Chrome、Edge、Safari の最新版</li>
+      <li><strong>インターネット</strong>：安定した接続環境</li>
+    </ul>
+</body>
+</html>
