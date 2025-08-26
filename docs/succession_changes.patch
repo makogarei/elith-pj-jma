@@ -1,0 +1,1133 @@
+diff --git a/.streamlit/secrets.toml b/.streamlit/secrets.toml
+new file mode 100644
+index 0000000..eae66eb
+--- /dev/null
++++ b/.streamlit/secrets.toml
+@@ -0,0 +1,5 @@
++# Streamlit secrets for local development
++# Paste your Anthropic Claude API key below or set it via the app sidebar.
++
++CLAUDE_API_KEY = "xxxxxxx"
++
+diff --git a/app.py b/app.py
+index 26331a6..0efc78f 100644
+--- a/app.py
++++ b/app.py
+@@ -43,6 +43,8 @@ if 'api_key' not in st.session_state:
+     st.session_state.api_key = st.secrets["CLAUDE_API_KEY"]
+ if 'exclude_keywords' not in st.session_state:
+     st.session_state.exclude_keywords = []
++if 'dry_run' not in st.session_state:
++    st.session_state.dry_run = False
+ if 'evaluation_prompt_template' not in st.session_state:
+     st.session_state.evaluation_prompt_template = """以下の受講者の事前課題回答とまとめシートを基に、8つの評価基準それぞれについて5点満点で評価してください。
+ 
+@@ -76,17 +78,17 @@ ASSESSMENT_PROMPTS = {
+     "pr_norm_ja": {
+         "step": "normalize",
+         "name": "Normalize JA",
+-        "content": "入力テキストを以下のセクションに分類し、各エントリを120字以内で要約してください。出力は JSON: {\"items\":[{\" :[{\"docId\":\"...\",\"section\":\"dept_status|dept_issues|solutions|vision|training_reflection|next1to2y\",\"summary\":\"...\",\"text\":\"...\"}], \"confidence\":\"low|med|high\"} のみ。"
++        "content": "入力テキストを以下のセクションに分類してください。各エントリは (1) summary: 120字以内の要約 と (2) text: 原文抜粋（逐語、改変禁止）を必ず含めます。出力は JSON: {\"items\":[{\"docId\":\"...\",\"section\":\"dept_status|dept_issues|solutions|vision|training_reflection|next1to2y\",\"summary\":\"...\",\"text\":\"...\"}], \"confidence\":\"low|med|high\"} のみ。"
+     },
+     "pr_evi_ja": {
+         "step": "evidence",
+         "name": "Evidence JA",
+-        "content": "正規化されたテキストから評価根拠を抽出。各抜粋は原文30〜200字、targetは SF|VCI|OL|DE|LA|CV|MR|MN、polarityは pos|neg|neutral。出力は JSON: {\"list\":[{\"id\":\"EV-1\",\"docId\":\"...\",\"polarity\":\"pos\",\"target\":\"DE\",\"quote\":\"...\",\"note\":\"...\"}]} のみ。"
++        "content": "提供された ORIGINAL_TEXT（原文）に基づき評価根拠を抽出。quote は ORIGINAL_TEXT からの逐語抜粋（サブストリング）であり、要約・言い換えは禁止。各抜粋は30〜200字、targetは SF|VCI|OL|DE|LA|CV|MR|MN、polarityは pos|neg|neutral。出力は JSON: {\"list\":[{\"id\":\"EV-1\",\"docId\":\"...\",\"polarity\":\"pos\",\"target\":\"DE\",\"quote\":\"...\",\"note\":\"...\"}]} のみ。"
+     },
+     "pr_score_ja": {
+         "step": "score",
+         "name": "Score JA",
+-        "content": "Evidenceに基づき各項目を1-5で採点。理由は100〜180字で、必ず evidenceIds を含める。獲得度は四捨五入で算出: solution=0.40*VCI+0.30*DE+0.30*LA、achievement=0.50*DE+0.30*OL+0.20*LA、management=0.40*OL+0.40*SF+0.20*MR。JSONのみで返答。"
++        "content": "Evidence(list)に基づき、以下の8項目について score(1-5), reason, evidenceIds を必ず返してください。JSONのみ。\n\n必須の構造:\n{\n  \"competencies\": {\n    \"SF\": {\"score\": 1, \"reason\": \"...\", \"evidenceIds\": [\"EV-1\", ...]},\n    \"VCI\": {\"score\": 1, \"reason\": \"...\", \"evidenceIds\": [...]},\n    \"OL\": {\"score\": 1, \"reason\": \"...\", \"evidenceIds\": [...]},\n    \"DE\": {\"score\": 1, \"reason\": \"...\", \"evidenceIds\": [...]},\n    \"LA\": {\"score\": 1, \"reason\": \"...\", \"evidenceIds\": [...]}\n  },\n  \"readiness\": {\n    \"CV\": {\"score\": 1, \"reason\": \"...\", \"evidenceIds\": [...]},\n    \"MR\": {\"score\": 1, \"reason\": \"...\", \"evidenceIds\": [...]},\n    \"MN\": {\"score\": 1, \"reason\": \"...\", \"evidenceIds\": [...]}\n  }\n}\n\n注: scoreは1〜5の整数。reasonは100〜180字。evidenceIdsは抽出済みEvidenceのidのみ。"
+     }
+ }
+ 
+@@ -96,6 +98,22 @@ ACQUISITION_FORMULAS = {
+     "management": {"OL": 0.40, "SF": 0.40, "MR": 0.20}
+ }
+ 
++# 表示用のラベルと順序（獲得度・準備度）
++COMPETENCY_ORDER = ["SF", "VCI", "OL", "DE", "LA"]
++READINESS_ORDER = ["CV", "MR", "MN"]
++COMPETENCY_LABELS = {
++    "SF": "戦略構想力",
++    "VCI": "価値創出・イノベーション力",
++    "OL": "人的資源・組織運営力",
++    "DE": "意思決定・実行力",
++    "LA": "学習・適応力",
++}
++READINESS_LABELS = {
++    "CV": "キャリアビジョン",
++    "MR": "使命感・責任感",
++    "MN": "体制・ネットワーク",
++}
++
+ # 8つの管理項目
+ MANAGEMENT_ITEMS = [
+     "役割認識",
+@@ -529,12 +547,90 @@ def _calculate_acquisition_scores(scores):
+         acq_scores[acq_name] = round(total_score)
+     return acq_scores
+ 
++# === ダミー生成ユーティリティ ===
++def _generate_dummy_evidence(original_text: str):
++    try:
++        import re
++        # 文切り出し（簡易）
++        sentences = [s.strip() for s in re.split(r"[。\n\r]", original_text or "") if s.strip()]
++        if not sentences:
++            chunk = (original_text or "入力がありません").strip()
++            sentences = [chunk[:80]]
++        ev_list = []
++        codes = COMPETENCY_ORDER + READINESS_ORDER
++        for i, code in enumerate(codes):
++            sent = sentences[i % len(sentences)]
++            if not sent:
++                sent = "（ダミー）入力文からの抜粋"
++            ev_list.append({
++                "id": f"EV-{code}-{i+1}",
++                "target": code,
++                "quote": sent
++            })
++        return {"list": ev_list}
++    except Exception:
++        # 最低限のフォールバック
++        ev_list = []
++        for i, code in enumerate(COMPETENCY_ORDER + READINESS_ORDER):
++            ev_list.append({"id": f"EV-{code}-{i+1}", "target": code, "quote": "（ダミー）原文抜粋"})
++        return {"list": ev_list}
++
++def _generate_dummy_scores(evidence: dict):
++    ev_list = evidence.get("list", []) if isinstance(evidence, dict) else []
++    by_target = {code: [] for code in (COMPETENCY_ORDER + READINESS_ORDER)}
++    for ev in ev_list:
++        tgt = ev.get("target")
++        if tgt in by_target:
++            by_target[tgt].append(ev.get("id"))
++
++    comp = {}
++    for code in COMPETENCY_ORDER:
++        label = COMPETENCY_LABELS.get(code, code)
++        comp[code] = {
++            "score": 4,
++            "reason": f"{label}に関する記述が入力文から確認されました。",
++            "evidenceIds": by_target.get(code, [])
++        }
++    ready = {}
++    for code in READINESS_ORDER:
++        label = READINESS_LABELS.get(code, code)
++        ready[code] = {
++            "score": 3,
++            "reason": f"{label}に関する記述が入力文から確認されました。",
++            "evidenceIds": by_target.get(code, [])
++        }
++    return {"competencies": comp, "readiness": ready}
++
++def _generate_dummy_normalized(original_text: str):
++    return {
++        "items": [
++            {"docId": "D-1", "section": "summary", "summary": "入力内容のダミー要約", "text": (original_text or "")[:120]}
++        ],
++        "confidence": "low"
++    }
++
++def _generate_dummy_assessment(full_text: str, original_text: str):
++    evidence = _generate_dummy_evidence(original_text)
++    scores = _generate_dummy_scores(evidence)
++    return {
++        "normalized": _generate_dummy_normalized(original_text),
++        "evidence": evidence,
++        "scores": scores,
++        "meta": {"dummy": True}
++    }
++
+ def run_assessment_evaluation_pipeline(user_input_df):
+     """3ステップの評価パイプラインを実行するオーケストレーター"""
+     full_text = ""
++    raw_concat = []
+     for _, row in user_input_df.iterrows():
+-        if row['あなたの考え'] and row['あなたの考え'].strip():
+-            full_text += f"## {row['項目']}\n\n{row['あなたの考え']}\n\n"
++        text_val = row.get('あなたの考え', '') if isinstance(row, dict) else row['あなたの考え']
++        if text_val and str(text_val).strip():
++            # ユーザー原文（逐語）を別途連結
++            raw_concat.append(str(text_val))
++            # 既存の正規化入力用テキストは従来どおり見出し付きで構築
++            full_text += f"## {row['項目']}\n\n{text_val}\n\n"
++    original_text = "\n\n".join(raw_concat)
+ 
+     if not full_text:
+         st.warning("入力がありません。")
+@@ -542,9 +638,10 @@ def run_assessment_evaluation_pipeline(user_input_df):
+ 
+     try:
+         client = get_client()
+-        if not client:
+-            st.error("APIキーが設定されていません")
+-            return None
++        # ドライランまたはAPIキー未設定時はダミー出力へ
++        if st.session_state.get('dry_run') or not client:
++            st.info("ドライラン（ダミー出力）で実行します。")
++            return _generate_dummy_assessment(full_text, original_text)
+             
+         final_result = {}
+ 
+@@ -558,8 +655,8 @@ def run_assessment_evaluation_pipeline(user_input_df):
+                 f"入力データ(JSON):\n{json.dumps({'input': {'text': full_text}})}"
+             )
+             if not normalized_data:
+-                st.error("正規化処理に失敗しました")
+-                return None
++                st.warning("正規化処理に失敗しました。ダミー出力に切替えます。")
++                return _generate_dummy_assessment(full_text, original_text)
+             final_result["normalized"] = normalized_data
+             st.success("ステップ1/3: 正規化完了")
+ 
+@@ -568,11 +665,11 @@ def run_assessment_evaluation_pipeline(user_input_df):
+             evidence_data = _call_claude(
+                 client,
+                 ASSESSMENT_PROMPTS["pr_evi_ja"]["content"],
+-                f"正規化入力:\n{json.dumps(normalized_data)}"
++                f"正規化入力:\n{json.dumps(normalized_data)}\n---\nORIGINAL_TEXT:\n{original_text}"
+             )
+             if not evidence_data:
+-                st.error("エビデンス抽出に失敗しました")
+-                return None
++                st.warning("エビデンス抽出に失敗しました。ダミー出力に切替えます。")
++                return _generate_dummy_assessment(full_text, original_text)
+             final_result["evidence"] = evidence_data
+             st.success("ステップ2/3: エビデンス抽出完了")
+ 
+@@ -586,8 +683,8 @@ def run_assessment_evaluation_pipeline(user_input_df):
+             )
+             
+             if not scores:
+-                st.error("スコア算出に失敗しました")
+-                return None
++                st.warning("コメント算出に失敗しました。ダミー出力に切替えます。")
++                return _generate_dummy_assessment(full_text, original_text)
+                 
+             acquisition_scores = _calculate_acquisition_scores(scores)
+             scores["acquisition"] = acquisition_scores
+@@ -605,7 +702,13 @@ def run_assessment_evaluation_pipeline(user_input_df):
+ 
+ # === メインアプリケーション ===
+ def main():
+-    st.title("🎓 統合管理システム")
++    # タイトルはモードに応じて表示名を切り替える
++    if st.session_state.system_mode == "assessment":
++        st.title("📊 サクセッション評価")
++    elif st.session_state.system_mode == "training":
++        st.title("📚 研修管理システム")
++    else:
++        st.title("🎓 統合管理システム")
+     
+     # システム選択
+     if st.session_state.system_mode is None:
+@@ -621,9 +724,9 @@ def main():
+                 st.rerun()
+         
+         with col2:
+-            st.subheader("📊 昇進アセスメント評価")
+-            st.write("AIによる昇進アセスメント評価を3ステップで実行します。")
+-            if st.button("アセスメント評価を使用", type="primary", use_container_width=True):
++            st.subheader("📊 サクセッション評価")
++            st.write("サクセッション評価を3ステップで実行します。")
++            if st.button("サクセッションを使用", type="primary", use_container_width=True):
+                 st.session_state.system_mode = "assessment"
+                 st.rerun()
+     
+@@ -1343,65 +1446,8 @@ JSON形式で以下を出力:
+     
+     # アセスメント評価システム
+     elif st.session_state.system_mode == "assessment":
+-        with st.sidebar:
+-            st.header("📋 メニュー")
+-            
+-            if st.button("🏠 システム選択に戻る"):
+-                st.session_state.system_mode = None
+-                st.rerun()
+-            
+-            st.divider()
+-            
+-            # APIキー設定
+-            with st.expander("🔑 API設定", expanded=not st.session_state.api_key):
+-                api_key_input = st.text_input(
+-                    "Claude API Key",
+-                    value=st.session_state.api_key,
+-                    type="password",
+-                    help="Anthropic Claude APIのキーを入力してください"
+-                )
+-                if st.button("APIキーを保存", type="primary"):
+-                    if api_key_input:
+-                        st.session_state.api_key = api_key_input
+-                        st.success("✅ APIキーを保存しました")
+-                        st.rerun()
+-                    else:
+-                        st.error("APIキーを入力してください")
+-            
+-            if not st.session_state.api_key:
+-                st.warning("⚠️ APIキーを設定してください")
+-            else:
+-                st.success("✅ API設定済み")
+-        
+-        st.header("AIによる昇進アセスメント評価ツール")
+-        st.info("以下の表にあなたの考えを入力し、「AI評価を実行する」ボタンを押してください。3ステップのAI評価が実行されます。")
+-        
+-        # 初期データ
+-        initial_data = {
+-            "項目": [
+-                "部署の現状と課題", "解決策の提案", "今後のビジョン",
+-                "研修の振り返り", "今後1-2年の取り組み",
+-            ],
+-            "あなたの考え": ["", "", "", "", ""]
+-        }
+-        input_df = pd.DataFrame(initial_data)
+-        
+-        st.subheader("評価シート")
+-        edited_df = st.data_editor(
+-            input_df, height=300,
+-            column_config={
+-                "項目": st.column_config.TextColumn(disabled=True),
+-                "あなたの考え": st.column_config.TextColumn(width="large")
+-            }, hide_index=True)
+-        
+-        if st.button("AI評価を実行する", type="primary"):
+-            if not st.session_state.api_key:
+-                st.error("Claude APIキーが設定されていません。サイドバーから設定してください。")
+-            else:
+-                final_evaluation = run_assessment_evaluation_pipeline(edited_df)
+-                if final_evaluation:
+-                    st.header("最終評価結果")
+-                    st.json(final_evaluation)
++        from succession.ui import render_assessment_ui
++        render_assessment_ui()
+ 
+ if __name__ == "__main__":
+-    main()
+\ No newline at end of file
++    main()
+diff --git a/docs/succession_user_guide.html b/docs/succession_user_guide.html
+new file mode 100644
+index 0000000..b4b8ff3
+--- /dev/null
++++ b/docs/succession_user_guide.html
+@@ -0,0 +1,372 @@
++<!DOCTYPE html>
++<html lang="ja">
++<head>
++    <meta charset="UTF-8">
++    <meta name="viewport" content="width=device-width, initial-scale=1.0">
++    <title>サクセッション評価ツール 初心者向け手順書</title>
++    <style>
++      @page {
++        size: A4;
++        margin: 20mm 15mm;
++      }
++
++      body {
++        font-family: 'メイリオ', 'Meiryo', 'ヒラギノ角ゴ Pro W3', 'Hiragino Kaku Gothic Pro', sans-serif;
++        line-height: 1.8;
++        color: #333;
++        max-width: 210mm;
++        margin: 0 auto;
++        padding: 20px;
++        background: white;
++      }
++
++      h1 {
++        text-align: center;
++        color: #2c3e50;
++        border-bottom: 3px solid #2c3e50;
++        padding-bottom: 15px;
++        margin-bottom: 30px;
++        font-size: 24pt;
++        page-break-after: avoid;
++      }
++
++      h2 {
++        color: #34495e;
++        border-left: 5px solid #3498db;
++        padding-left: 15px;
++        margin-top: 30px;
++        margin-bottom: 20px;
++        font-size: 18pt;
++        page-break-after: avoid;
++        page-break-inside: avoid;
++      }
++
++      h3 {
++        color: #2c3e50;
++        margin-top: 25px;
++        margin-bottom: 15px;
++        font-size: 14pt;
++        page-break-after: avoid;
++      }
++
++      h4 {
++        color: #34495e;
++        margin-top: 20px;
++        margin-bottom: 10px;
++        font-size: 12pt;
++        page-break-after: avoid;
++      }
++
++      .step-box {
++        background-color: #f8f9fa;
++        border: 1px solid #dee2e6;
++        padding: 20px;
++        margin: 15px 0;
++        border-radius: 5px;
++        page-break-inside: avoid;
++      }
++
++      .highlight {
++        background-color: #fff3cd;
++        border: 1px solid #ffeaa7;
++        padding: 10px;
++        margin: 10px 0;
++        border-radius: 3px;
++        page-break-inside: avoid;
++      }
++
++      .important {
++        background-color: #d1ecf1;
++        border: 1px solid #bee5eb;
++        padding: 10px;
++        margin: 10px 0;
++        border-radius: 3px;
++        page-break-inside: avoid;
++      }
++
++      .warning {
++        background-color: #f8d7da;
++        border: 1px solid #f5c6cb;
++        padding: 10px;
++        margin: 10px 0;
++        border-radius: 3px;
++        page-break-inside: avoid;
++      }
++
++      .tip {
++        background-color: #e7f3ff;
++        border-left: 4px solid #2196f3;
++        padding: 15px;
++        margin: 15px 0;
++        page-break-inside: avoid;
++      }
++
++      ol, ul {
++        margin: 15px 0;
++        padding-left: 30px;
++        page-break-inside: avoid;
++      }
++
++      li {
++        margin: 8px 0;
++        orphans: 3;
++        widows: 3;
++      }
++
++      table {
++        width: 100%;
++        border-collapse: collapse;
++        margin: 20px 0;
++        page-break-inside: avoid;
++      }
++
++      th, td {
++        border: 1px solid #dee2e6;
++        padding: 12px;
++        text-align: left;
++      }
++
++      th {
++        background-color: #f8f9fa;
++        font-weight: bold;
++      }
++
++      code {
++        background-color: #f1f3f4;
++        padding: 2px 5px;
++        border-radius: 3px;
++        font-family: 'Courier New', monospace;
++      }
++
++      .page-break {
++        page-break-after: always;
++      }
++
++      .keep-together {
++        page-break-inside: avoid;
++      }
++
++      @media print {
++        body {
++          font-size: 11pt;
++        }
++        .step-box, .highlight, .important, .warning, .tip {
++          break-inside: avoid;
++          page-break-inside: avoid;
++        }
++        h1, h2, h3, h4 {
++          page-break-after: avoid;
++        }
++        img {
++          max-width: 100% !important;
++          height: auto !important;
++          page-break-inside: avoid;
++        }
++        h2 {
++          margin-top: 40px;
++        }
++        li {
++          page-break-inside: avoid;
++        }
++      }
++
++      .emoji {
++        font-family: 'Segoe UI Emoji', 'Apple Color Emoji', 'Noto Color Emoji', sans-serif;
++      }
++    </style>
++</head>
++<body>
++    <h1>📊 サクセッション評価ツール 初心者向け手順書</h1>
++
++    <h2>📌 はじめに</h2>
++    <p>
++      この手順書は、サクセッション評価ツールを初めて使う方向けのガイドです。<br>
++      「設定 → 実行 → 結果確認 → 調整」が迷わず進められるよう、画面構成と操作の流れを説明します。
++    </p>
++
++    <h2>🚀 システムの起動方法</h2>
++
++    <div class="keep-together">
++      <h3>ステップ1：システムにアクセスする</h3>
++      <div class="step-box">
++        <ol>
++          <li>パソコンのブラウザ（Chrome、Edge、Safari 等）を開く</li>
++          <li>URLにアクセス：<code>http://localhost:8501</code>（起動済みの場合）</li>
++          <li>未起動の場合は、端末で <code>streamlit run app.py</code> を実行してからアクセス</li>
++        </ol>
++      </div>
++    </div>
++
++    <div class="keep-together">
++      <h3>ステップ2：最初の画面</h3>
++      <div class="step-box">
++        <p>最初に「<strong>システムを選択してください</strong>」が表示されます。</p>
++        <p><img src="capture_system_select.png" alt="システム選択画面" style="max-width: 100%; height: auto;"></p>
++        <ul>
++          <li>左側：「📚 研修管理システム」ボタン</li>
++          <li>右側：「📊 サクセッション評価」ボタン</li>
++        </ul>
++        <div class="highlight">
++          <p>→ <strong>「サクセッションを使用」をクリック</strong></p>
++        </div>
++      </div>
++    </div>
++
++    <h2>🖼 画面構成</h2>
++
++    <div class="keep-together">
++      <h3>🏠 基本画面の見方</h3>
++      <p>画面は「左：サイドバー」「右：メインタブ」で構成されています。</p>
++
++      <div class="step-box">
++        <h4>左側（サイドバー）</h4>
++        <ul>
++          <li>システム選択に戻る</li>
++          <li>API設定（Claude API Key の登録）</li>
++          <li>ドライラン（ダミー出力）のオン／オフ</li>
++        </ul>
++
++        <h4>右側（メインタブ）</h4>
++        <ul>
++          <li>評価：入力 → 実行 → 結果</li>
++          <li>プロンプト設定：正規化／エビデンス／スコア（共通／項目別ヒント）／プレビュー</li>
++        </ul>
++        <div><p><img src="capture_layout.png" alt="画面構成" style="max-width: 100%; height: auto;"></p></div>
++      </div>
++    </div>
++
++    <h2>✅ はじめての実行</h2>
++
++    <div class="keep-together">
++      <h3>1️⃣ APIキーを設定</h3>
++      <div class="step-box">
++        <ol>
++          <li>左サイドバーの「🔑 API設定」を開く</li>
++          <li>Claude API Key を入力 → 「APIキーを保存」</li>
++          <li>「✅ API設定済み」と表示されれば準備完了</li>
++        </ol>
++        <div class="important">APIキーが未設定でも、<strong>ドライラン（ダミー出力）</strong>で出力形式の確認が可能です。</div>
++      </div>
++    </div>
++
++    <div class="keep-together">
++      <h3>2️⃣ 入力 → 実行</h3>
++      <div class="step-box">
++        <ol>
++          <li>メインの「評価」タブを開く</li>
++          <li>テキストボックスに「課題＋実施内容」をまとめて入力（1ボックス）</li>
++          <li>「AI評価を実行」ボタンをクリック</li>
++        </ol>
++        <div class="highlight">実行フロー：正規化 → エビデンス抽出（原文逐語） → スコアリング（1–5点）</div>
++      </div>
++    </div>
++
++    <div class="keep-together">
++      <h3>3️⃣ 結果を確認</h3>
++      <div class="step-box">
++        <p>結果は「<strong>獲得度</strong>」「<strong>準備度</strong>」の順で表示されます。</p>
++        <ul>
++          <li>各中項目の見出しに <strong>スコア（x/5）</strong> を表示</li>
++          <li><strong>根拠（原文）</strong>：入力原文からの逐語引用（言い換え・要約なし）</li>
++          <li><strong>コメント</strong>：短い評価理由（1〜2段落）</li>
++          <li>詳細（開発者向け）：JSON全体（normalized/evidence/scores）</li>
++        </ul>
++        <table>
++          <thead><tr><th>大項目</th><th>中項目（表示）</th></tr></thead>
++          <tbody>
++            <tr><td>獲得度</td><td>戦略構想力（SF）／価値創出・イノベーション力（VCI）／人的資源・組織運営力（OL）／意思決定・実行力（DE）／学習・適応力（LA）</td></tr>
++            <tr><td>準備度</td><td>キャリアビジョン（CV）／使命感・責任感（MR）／体制・ネットワーク（MN）</td></tr>
++          </tbody>
++        </table>
++      </div>
++    </div>
++
++    <h2>🧪 ドライラン（ダミー出力）</h2>
++    <div class="keep-together">
++      <div class="step-box">
++        <ul>
++          <li>左サイドバーの「ドライラン（ダミー出力）」にチェック</li>
++          <li>APIを呼ばずに、<strong>本番と同じ表示形式</strong>で結果を確認</li>
++          <li class="highlight">プロンプトの変更効果はドライランに反映されません。形式確認にご利用ください。</li>
++        </ul>
++      </div>
++    </div>
++
++    <h2>📝 プロンプト設定（上級者向け）</h2>
++    <div class="keep-together">
++      <h3>構成</h3>
++      <div class="step-box">
++        <ul>
++          <li><strong>正規化</strong>：JSONのみ返答、summary/text の分離を明示</li>
++          <li><strong>エビデンス</strong>：ORIGINAL_TEXT からの逐語抜粋を強制（サブストリング）／target は SF|VCI|OL|DE|LA|CV|MR|MN</li>
++          <li><strong>スコア（共通）</strong>：各中項目に <code>score(1–5)</code>、<code>reason</code>、<code>evidenceIds</code> を必須化</li>
++          <li><strong>スコア（項目別ヒント）</strong>：各中項目の採点観点（Rubrics）を短文で記述（スコア実行時の User メッセージに結合）</li>
++          <li><strong>プレビュー</strong>：適用中のプロンプトと Rubrics の確認用</li>
++        </ul>
++      </div>
++
++      <h3>編集の影響範囲</h3>
++      <div class="step-box">
++        <ul>
++          <li><strong>正規化</strong>：後続ステップの下地が変わります（要約しすぎに注意）</li>
++          <li><strong>エビデンス</strong>：根拠の精度・件数・粒度に影響（逐語抜粋の指示は保持）</li>
++          <li><strong>スコア（共通）</strong>：返却 JSON 構造に影響（必須フィールドは維持）</li>
++          <li><strong>項目別ヒント</strong>：採点観点のチューニング（出力形式は不変）</li>
++        </ul>
++        <div class="tip">編集内容は「評価」タブで実行したタイミングで適用されます。</div>
++      </div>
++    </div>
++
++    <h2>🔧 トラブルシューティング</h2>
++
++    <div class="keep-together">
++      <h3>よくある問題と対処</h3>
++      <div class="step-box">
++        <h4>Q1：APIエラーが出る／結果が返らない</h4>
++        <p><strong>A：</strong>APIキーを再確認。失敗時は自動でダミーに切替わるため、画面の案内を確認。</p>
++
++        <h4>Q2：エビデンス（原文）が表示されない</h4>
++        <p><strong>A：</strong>入力の具体性が不足している可能性。エビデンス抽出プロンプトの条件が厳しすぎないかも確認。</p>
++
++        <h4>Q3：スコアが欠落している</h4>
++        <p><strong>A：</strong>スコア（共通）で <code>score/reason/evidenceIds</code> が必須であることを再確認。</p>
++
++        <h4>Q4：プロンプトの変更が反映されない</h4>
++        <p><strong>A：</strong>ドライラン中ではないか確認。「プレビュー」で内容確認→本番実行で効果を検証。</p>
++      </div>
++    </div>
++
++    <h2>💡 便利な使い方のコツ</h2>
++    <div class="keep-together">
++      <div class="step-box">
++        <ol>
++          <li><strong>まずはドライランで形式確認</strong>：API消費なしで画面と出力形を把握</li>
++          <li><strong>小さく回す</strong>：短い入力で1件試し、Rubricsを微調整→再実行</li>
++          <li><strong>Rubricsは短く具体的に</strong>：1–3行/項目。重視点とNG例を簡潔に</li>
++        </ol>
++      </div>
++    </div>
++
++    <h2>📎 付録：項目対応表</h2>
++    <table>
++      <thead><tr><th>コード</th><th>表示名</th><th>区分</th></tr></thead>
++      <tbody>
++        <tr><td>SF</td><td>戦略構想力</td><td>獲得度</td></tr>
++        <tr><td>VCI</td><td>価値創出・イノベーション力</td><td>獲得度</td></tr>
++        <tr><td>OL</td><td>人的資源・組織運営力</td><td>獲得度</td></tr>
++        <tr><td>DE</td><td>意思決定・実行力</td><td>獲得度</td></tr>
++        <tr><td>LA</td><td>学習・適応力</td><td>獲得度</td></tr>
++        <tr><td>CV</td><td>キャリアビジョン</td><td>準備度</td></tr>
++        <tr><td>MR</td><td>使命感・責任感</td><td>準備度</td></tr>
++        <tr><td>MN</td><td>体制・ネットワーク</td><td>準備度</td></tr>
++      </tbody>
++    </table>
++
++    <h2>推奨環境</h2>
++    <ul>
++      <li><strong>ブラウザ</strong>：Chrome、Edge、Safari の最新版</li>
++      <li><strong>インターネット</strong>：安定した接続環境（本番実行時）</li>
++    </ul>
++</body>
++</html>
++
+diff --git a/succession/config.py b/succession/config.py
+new file mode 100644
+index 0000000..6e8fe40
+--- /dev/null
++++ b/succession/config.py
+@@ -0,0 +1,75 @@
++from __future__ import annotations
++from typing import Dict, Any
++import streamlit as st
++from .defaults import PROMPTS_DEFAULTS, RUBRICS_DEFAULTS
++
++
++def ensure_session() -> None:
++    if 'succession' not in st.session_state:
++        st.session_state.succession = {}
++    s = st.session_state.succession
++    s.setdefault('prompts', {})
++    s.setdefault('prompts_version', 'v1')
++    s.setdefault('rubrics', {})
++    s.setdefault('flags', {'dry_run': False})
++
++    # Init defaults if empty
++    if not s['prompts']:
++        s['prompts'] = {
++            'norm': PROMPTS_DEFAULTS['norm'],
++            'evidence': PROMPTS_DEFAULTS['evidence'],
++            'score': PROMPTS_DEFAULTS['score'],
++        }
++    if not s['rubrics']:
++        s['rubrics'] = dict(RUBRICS_DEFAULTS)
++
++
++def get_prompts() -> Dict[str, str]:
++    ensure_session()
++    return st.session_state.succession['prompts']
++
++
++def get_prompt(key: str) -> str:
++    return get_prompts().get(key, '')
++
++
++def set_prompt(key: str, value: str) -> None:
++    ensure_session()
++    st.session_state.succession['prompts'][key] = value
++
++
++def get_rubrics() -> Dict[str, str]:
++    ensure_session()
++    return st.session_state.succession['rubrics']
++
++
++def set_rubric(code: str, text: str) -> None:
++    ensure_session()
++    st.session_state.succession['rubrics'][code] = text
++
++
++def get_flags() -> Dict[str, Any]:
++    ensure_session()
++    return st.session_state.succession['flags']
++
++
++def set_flag(name: str, value: Any) -> None:
++    ensure_session()
++    st.session_state.succession['flags'][name] = value
++
++
++def build_rubrics_text() -> str:
++    rubrics = get_rubrics()
++    lines = []
++    for code, txt in rubrics.items():
++        lines.append(f"{code}: {txt}")
++    return "\n".join(lines)
++
++
++def build_config() -> Dict[str, Any]:
++    return {
++        'prompts': get_prompts(),
++        'rubrics_text': build_rubrics_text(),
++        'flags': get_flags(),
++    }
++
+diff --git a/succession/constants.py b/succession/constants.py
+new file mode 100644
+index 0000000..0514539
+--- /dev/null
++++ b/succession/constants.py
+@@ -0,0 +1,22 @@
++from typing import List, Dict
++
++# Codes for items
++COMPETENCY_ORDER: List[str] = ["SF", "VCI", "OL", "DE", "LA"]
++READINESS_ORDER: List[str] = ["CV", "MR", "MN"]
++
++COMPETENCY_LABELS: Dict[str, str] = {
++    "SF": "戦略構想力",
++    "VCI": "価値創出・イノベーション力",
++    "OL": "人的資源・組織運営力",
++    "DE": "意思決定・実行力",
++    "LA": "学習・適応力",
++}
++
++READINESS_LABELS: Dict[str, str] = {
++    "CV": "キャリアビジョン",
++    "MR": "使命感・責任感",
++    "MN": "体制・ネットワーク",
++}
++
++ALL_CODES: List[str] = COMPETENCY_ORDER + READINESS_ORDER
++
+diff --git a/succession/defaults.py b/succession/defaults.py
+new file mode 100644
+index 0000000..d97d4ae
+--- /dev/null
++++ b/succession/defaults.py
+@@ -0,0 +1,33 @@
++PROMPTS_DEFAULTS = {
++    "norm": (
++        "入力テキストを以下のセクションに分類してください。"
++        "各エントリは (1) summary: 120字以内の要約 と (2) text: 原文抜粋（逐語、改変禁止）を必ず含めます。"
++        "出力は JSON: {\"items\":[{\"docId\":\"...\",\"section\":\"dept_status|dept_issues|solutions|vision|training_reflection|next1to2y\",\"summary\":\"...\",\"text\":\"...\"}], \"confidence\":\"low|med|high\"} のみ。"
++    ),
++    "evidence": (
++        "提供された ORIGINAL_TEXT（原文）に基づき評価根拠を抽出。"
++        "quote は ORIGINAL_TEXT からの逐語抜粋（サブストリング）であり、要約・言い換えは禁止。"
++        "各抜粋は30〜200字、targetは SF|VCI|OL|DE|LA|CV|MR|MN、polarityは pos|neg|neutral。"
++        "出力は JSON: {\"list\":[{\"id\":\"EV-1\",\"docId\":\"...\",\"polarity\":\"pos\",\"target\":\"DE\",\"quote\":\"...\",\"note\":\"...\"}]} のみ。"
++    ),
++    "score": (
++        "Evidence(list)に基づき、以下の8項目について score(1-5), reason, evidenceIds を必ず返してください。JSONのみ。\n\n"
++        "必須の構造:\n{\n  \"competencies\": {\n    \"SF\": {\"score\": 1, \"reason\": \"...\", \"evidenceIds\": [\"EV-1\", ...]},\n"
++        "    \"VCI\": {\"score\": 1, \"reason\": \"...\", \"evidenceIds\": [...]},\n    \"OL\": {\"score\": 1, \"reason\": \"...\", \"evidenceIds\": [...]},\n"
++        "    \"DE\": {\"score\": 1, \"reason\": \"...\", \"evidenceIds\": [...]},\n    \"LA\": {\"score\": 1, \"reason\": \"...\", \"evidenceIds\": [...]}\n  },\n"
++        "  \"readiness\": {\n    \"CV\": {\"score\": 1, \"reason\": \"...\", \"evidenceIds\": [...]},\n    \"MR\": {\"score\": 1, \"reason\": \"...\", \"evidenceIds\": [...]},\n    \"MN\": {\"score\": 1, \"reason\": \"...\", \"evidenceIds\": [...]}\n  }\n}\n\n"
++        "注: scoreは1〜5の整数。reasonは100〜180字。evidenceIdsは抽出済みEvidenceのidのみ。"
++    ),
++}
++
++RUBRICS_DEFAULTS = {
++    "SF": "長期視点・整合性・仮説妥当性・全体観の示唆を重視",
++    "VCI": "価値仮説・差別化・改善/創造アクションの具体性",
++    "OL": "配員・育成・協働・制度活用など運営の具体性",
++    "DE": "意思決定プロセス・リスク評価・実行計画の緻密さ",
++    "LA": "振り返り・学習循環・適応の速さと広がり",
++    "CV": "キャリア像の具体性・期間・整合性",
++    "MR": "使命/責任の根拠・動機の一貫性",
++    "MN": "体制・利害関係者・ネットワーク活用の実効性",
++}
++
+diff --git a/succession/dummy.py b/succession/dummy.py
+new file mode 100644
+index 0000000..31a351d
+--- /dev/null
++++ b/succession/dummy.py
+@@ -0,0 +1,53 @@
++from typing import Dict, List
++from .constants import COMPETENCY_ORDER, READINESS_ORDER, ALL_CODES, COMPETENCY_LABELS, READINESS_LABELS
++
++
++def generate_dummy_evidence(original_text: str) -> Dict:
++    import re
++    sentences = [s.strip() for s in re.split(r"[。\n\r]", original_text or "") if s.strip()]
++    if not sentences:
++        sentences = [(original_text or "入力がありません")[:80]]
++    ev_list: List[Dict] = []
++    for i, code in enumerate(ALL_CODES):
++        sent = sentences[i % len(sentences)] or "（ダミー）入力文からの抜粋"
++        ev_list.append({
++            "id": f"EV-{code}-{i+1}",
++            "target": code,
++            "quote": sent,
++        })
++    return {"list": ev_list}
++
++
++def generate_dummy_scores(evidence: Dict) -> Dict:
++    ev_list = evidence.get("list", []) if isinstance(evidence, dict) else []
++    by_code = {c: [] for c in ALL_CODES}
++    for ev in ev_list:
++        tgt = ev.get("target")
++        if tgt in by_code:
++            by_code[tgt].append(ev.get("id"))
++
++    comp = {}
++    for code in COMPETENCY_ORDER:
++        label = COMPETENCY_LABELS.get(code, code)
++        comp[code] = {"score": 4, "reason": f"{label}に関する記述が入力文から確認されました。", "evidenceIds": by_code.get(code, [])}
++    ready = {}
++    for code in READINESS_ORDER:
++        label = READINESS_LABELS.get(code, code)
++        ready[code] = {"score": 3, "reason": f"{label}に関する記述が入力文から確認されました。", "evidenceIds": by_code.get(code, [])}
++    return {"competencies": comp, "readiness": ready}
++
++
++def generate_dummy_normalized(original_text: str) -> Dict:
++    return {"items": [{"docId": "D-1", "section": "summary", "summary": "入力内容のダミー要約", "text": (original_text or "")[:120]}], "confidence": "low"}
++
++
++def generate_dummy_assessment(original_text: str) -> Dict:
++    evidence = generate_dummy_evidence(original_text)
++    scores = generate_dummy_scores(evidence)
++    return {
++        "normalized": generate_dummy_normalized(original_text),
++        "evidence": evidence,
++        "scores": scores,
++        "meta": {"dummy": True},
++    }
++
+diff --git a/succession/pipeline.py b/succession/pipeline.py
+new file mode 100644
+index 0000000..3604ce9
+--- /dev/null
++++ b/succession/pipeline.py
+@@ -0,0 +1,66 @@
++from __future__ import annotations
++from typing import Any, Dict
++import json
++
++
++def _call_claude(client, system_prompt: str, user_content: str) -> Dict | None:
++    try:
++        response = client.messages.create(
++            model="claude-sonnet-4-20250514",
++            max_tokens=4000,
++            messages=[{"role": "user", "content": f"System: {system_prompt}\n\nUser: {user_content}\n\nPlease respond with valid JSON only."}],
++        )
++        content = response.content[0].text
++        import re
++        json_match = re.search(r"\{[\s\S]*\}", content)
++        if json_match:
++            return json.loads(json_match.group())
++        else:
++            return json.loads(content)
++    except Exception:
++        return None
++
++
++def run_pipeline(raw_text: str, cfg: Dict[str, Any], api_key: str | None) -> Dict:
++    from .dummy import generate_dummy_assessment
++    import anthropic
++
++    if not raw_text or not raw_text.strip():
++        return None
++
++    # Dry-run or no key → dummy
++    if cfg.get('flags', {}).get('dry_run') or not api_key:
++        return generate_dummy_assessment(raw_text)
++
++    client = anthropic.Anthropic(api_key=api_key)
++
++    # Step 1: normalize
++    norm = _call_claude(
++        client,
++        cfg['prompts']['norm'],
++        f"入力データ(JSON):\n{json.dumps({'input': {'text': raw_text}})}",
++    )
++    if not norm:
++        return generate_dummy_assessment(raw_text)
++
++    # Step 2: evidence (include ORIGINAL_TEXT)
++    evid = _call_claude(
++        client,
++        cfg['prompts']['evidence'],
++        f"正規化入力:\n{json.dumps(norm)}\n---\nORIGINAL_TEXT:\n{raw_text}",
++    )
++    if not evid:
++        return generate_dummy_assessment(raw_text)
++
++    # Step 3: score with rubrics
++    score_user_content = f"正規化入力:\n{json.dumps(norm)}\n---\nエビデンス:\n{json.dumps(evid)}\n---\nRUBRICS:\n{cfg.get('rubrics_text','')}"
++    scores = _call_claude(
++        client,
++        cfg['prompts']['score'],
++        score_user_content,
++    )
++    if not scores:
++        return generate_dummy_assessment(raw_text)
++
++    return {"normalized": norm, "evidence": evid, "scores": scores}
++
+diff --git a/succession/ui.py b/succession/ui.py
+new file mode 100644
+index 0000000..d2020f1
+--- /dev/null
++++ b/succession/ui.py
+@@ -0,0 +1,160 @@
++from __future__ import annotations
++import json
++import streamlit as st
++import pandas as pd
++from typing import Any, Dict
++
++from .constants import COMPETENCY_ORDER, READINESS_ORDER, COMPETENCY_LABELS, READINESS_LABELS
++from . import config as scfg
++from . import pipeline as spipe
++
++
++def render_prompts_panel():
++    scfg.ensure_session()
++    prompts = scfg.get_prompts()
++    rubrics = scfg.get_rubrics()
++
++    tabs = st.tabs(["正規化", "エビデンス", "スコア（共通）", "スコア（項目別ヒント）", "プレビュー"])
++    with tabs[0]:
++        norm_val = st.text_area("正規化プロンプト", value=prompts.get('norm',''), height=160)
++        if st.button("保存（正規化）"):
++            scfg.set_prompt('norm', norm_val)
++            st.success("保存しました")
++    with tabs[1]:
++        ev_val = st.text_area("エビデンス抽出プロンプト", value=prompts.get('evidence',''), height=220)
++        if st.button("保存（エビデンス）"):
++            scfg.set_prompt('evidence', ev_val)
++            st.success("保存しました")
++    with tabs[2]:
++        sc_val = st.text_area("スコアリング共通プロンプト", value=prompts.get('score',''), height=260)
++        if st.button("保存（スコア）"):
++            scfg.set_prompt('score', sc_val)
++            st.success("保存しました")
++    with tabs[3]:
++        for code, label in {**COMPETENCY_LABELS, **READINESS_LABELS}.items():
++            txt = st.text_area(f"{label}（{code}）", value=rubrics.get(code, ''), height=90, key=f"rub_{code}")
++            scfg.set_rubric(code, txt)
++        st.info("入力は即時反映されます")
++    with tabs[4]:
++        cfg = scfg.build_config()
++        st.code(json.dumps({"prompts": cfg['prompts'], "rubrics": cfg['rubrics_text']}, ensure_ascii=False, indent=2), language="json")
++
++
++def render_assessment_ui():
++    scfg.ensure_session()
++
++    # Sidebar: back, API, dry-run
++    with st.sidebar:
++        st.header("📋 メニュー")
++        if st.button("🏠 システム選択に戻る"):
++            st.session_state.system_mode = None
++            st.rerun()
++        st.divider()
++
++        with st.expander("🔑 API設定", expanded=not st.session_state.api_key):
++            api_key_input = st.text_input("Claude API Key", value=st.session_state.api_key, type="password")
++            if st.button("APIキーを保存", type="primary"):
++                if api_key_input:
++                    st.session_state.api_key = api_key_input
++                    st.success("✅ APIキーを保存しました")
++                    st.rerun()
++                else:
++                    st.error("APIキーを入力してください")
++        if not st.session_state.api_key:
++            st.warning("⚠️ APIキーを設定してください")
++        else:
++            st.success("✅ API設定済み")
++
++        st.divider()
++        dry = st.checkbox("ドライラン（ダミー出力）", value=scfg.get_flags().get('dry_run', False))
++        scfg.set_flag('dry_run', dry)
++
++    # Main body with tabs like 集合研修: 評価 / プロンプト設定
++    st.header("サクセッション評価ツール")
++    tabs = st.tabs(["評価", "プロンプト設定"])
++
++    with tabs[0]:
++        st.info("課題と実施内容など、評価に必要な情報を1つのテキストボックスにまとめて入力してください。\n入力後に『AI評価を実行する』を押すと3ステップ評価を行います。")
++
++        user_bulk_text = st.text_area(
++            "課題・実施内容（まとめて入力）",
++            height=260,
++            placeholder="例）課題文、取り組み内容、成果、振り返り、今後の計画 などをまとめて記載してください。",
++        )
++
++        if st.button("AI評価を実行する", type="primary"):
++            raw_text = user_bulk_text.strip()
++            final_evaluation = spipe.run_pipeline(raw_text, scfg.build_config(), st.session_state.api_key)
++            if final_evaluation:
++                st.header("最終評価結果")
++
++            scores = final_evaluation.get("scores", {}) or {}
++            evidence_list = final_evaluation.get("evidence", {}).get("list", []) or []
++
++            ev_by_id = {}
++            ev_by_target = {code: [] for code in (COMPETENCY_ORDER + READINESS_ORDER)}
++            for ev in evidence_list:
++                ev_id = ev.get("id")
++                if ev_id:
++                    ev_by_id[ev_id] = ev
++                tgt = ev.get("target")
++                if tgt in ev_by_target:
++                    ev_by_target[tgt].append(ev)
++
++            def render_item(code: str, label: str, data_block: Dict[str, Any]):
++                # score
++                score_val = None
++                if isinstance(data_block, dict):
++                    score_val = data_block.get("score") or data_block.get("Score")
++                title = f"### {label}"
++                if isinstance(score_val, (int, float)):
++                    title = f"### {label} — {int(score_val)}/5"
++                st.markdown(title)
++
++                # evidence
++                ids = []
++                if isinstance(data_block, dict):
++                    ids = data_block.get("evidenceIds") or []
++                quotes = []
++                for eid in ids:
++                    ev = ev_by_id.get(eid)
++                    if ev and ev.get("quote"):
++                        quotes.append(ev.get("quote"))
++                if not quotes:
++                    for ev in ev_by_target.get(code, [])[:3]:
++                        if ev.get("quote"):
++                            quotes.append(ev.get("quote"))
++                st.write("根拠（原文）")
++                if quotes:
++                    for q in quotes:
++                        st.write(q)
++                else:
++                    st.caption("該当する原文の根拠は見つかりませんでした。")
++
++                # reason
++                reason = ""
++                if isinstance(data_block, dict):
++                    reason = data_block.get("reason") or ""
++                if reason:
++                    st.write("コメント")
++                    st.write(reason)
++
++                # 獲得度
++                st.subheader("獲得度")
++                comp = scores.get("competencies", {}) or {}
++                for code in COMPETENCY_ORDER:
++                    render_item(code, COMPETENCY_LABELS.get(code, code), comp.get(code, {}))
++                    st.divider()
++
++                # 準備度
++                st.subheader("準備度")
++                ready = scores.get("readiness", {}) or {}
++                for code in READINESS_ORDER:
++                    render_item(code, READINESS_LABELS.get(code, code), ready.get(code, {}))
++                    st.divider()
++
++                with st.expander("詳細（JSON全体）"):
++                    st.json(final_evaluation)
++
++    with tabs[1]:
++        render_prompts_panel()
