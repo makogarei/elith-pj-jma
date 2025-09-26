@@ -734,7 +734,7 @@ def render_registration_page() -> None:
                     "経営宣言 価値観・信念": values,
                 }
                 add_student_record(name.strip(), student_inputs)
-                st.success(f"{name.strip()} を登録しました。評価は『評価ダッシュボード』ページで実行できます。")
+                st.success(f"{name.strip()} を登録しました。評価は『評価デモ』ページで実行できます。")
                 reset_registration_form()
 
     render_divider()
@@ -759,7 +759,7 @@ def run_student_evaluation(index: int) -> bool:
 
 
 def render_evaluation_page() -> None:
-    st.header("評価ダッシュボード")
+    st.header("評価デモ")
     st.markdown("<span class='metric-chip'>STEP 2</span> Claude評価と分析", unsafe_allow_html=True)
 
     if not st.session_state.students:
@@ -838,13 +838,13 @@ def render_evaluation_page() -> None:
         st.info("まだ評価済みの受講生がありません。未評価の受講生を評価してください。")
 
 
-PAGE_TITLE = "受講生評価ダッシュボード"
+PAGE_TITLE = "受講生評価demo"
 st.set_page_config(page_title=PAGE_TITLE, page_icon="📊", layout="wide")
 ensure_session_state()
 inject_global_styles()
 
 st.sidebar.title("ナビゲーション")
-NAVIGATION_OPTIONS = ["受講生登録", "評価ダッシュボード"]
+NAVIGATION_OPTIONS = ["受講生登録", "評価デモ"]
 current_page = st.sidebar.radio("ページを選択してください", NAVIGATION_OPTIONS)
 
 st.title(PAGE_TITLE)
