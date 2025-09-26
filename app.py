@@ -1,1407 +1,855 @@
-import streamlit as st
-import requests
-from bs4 import BeautifulSoup
-import anthropic
 import json
-from datetime import datetime
-import pandas as pd
 import os
-from typing import Dict, List
-import PyPDF2
-import io
-import base64
+from dataclasses import dataclass
+from typing import Any, Dict, List, Optional
 
-# ページ設定
-st.set_page_config(
-    page_title="研修評価デモ",
-    page_icon="🎓",
-    layout="wide"
-)
+import html
 
-# セッション状態の初期化
-if 'system_mode' not in st.session_state:
-    st.session_state.system_mode = None
-if 'course_info' not in st.session_state:
-    st.session_state.course_info = None
-if 'participants' not in st.session_state:
-    st.session_state.participants = []
-if 'evaluations' not in st.session_state:
-    st.session_state.evaluations = {}
-if 'pre_tasks' not in st.session_state:
-    st.session_state.pre_tasks = {}
-if 'summary_sheets' not in st.session_state:
-    st.session_state.summary_sheets = {}
-if 'debug_mode' not in st.session_state:
-    st.session_state.debug_mode = False
-if 'pdf_files' not in st.session_state:
-    st.session_state.pdf_files = {}
-if 'dummy_answers' not in st.session_state:
-    st.session_state.dummy_answers = {}
-if 'dummy_summary' not in st.session_state:
-    st.session_state.dummy_summary = {}
-if 'api_key' not in st.session_state:
-    st.session_state.api_key = st.secrets["CLAUDE_API_KEY"]
-if 'exclude_keywords' not in st.session_state:
-    st.session_state.exclude_keywords = []
-if 'evaluation_prompt_template' not in st.session_state:
-    st.session_state.evaluation_prompt_template = """以下の受講者の事前課題回答とまとめシートを基に、8つの評価基準それぞれについて5点満点で評価してください。
+import plotly.graph_objects as go
+import streamlit as st
 
-事前課題回答:
-{pre_task_answers}
+try:
+    from anthropic import Anthropic, APIError
+except ImportError:  # Streamlit will surface this nicely to the user
+    Anthropic = None
+    APIError = Exception
 
-まとめシート:
-{summary_sheet}
-
-評価基準:
-{evaluation_criteria}
-
-各基準について1-5点で評価し、評価理由を記載してください。
-事前課題とまとめシートの両方を考慮して総合的に評価してください。
-
-JSON形式で出力してください：
-{{
-    "evaluations": [
-        {{
-            "criteria": "基準名",
-            "score": 点数,
-            "reason": "評価理由"
-        }}
-    ],
-    "total_score": 合計点,
-    "overall_feedback": "総合フィードバック"
-}}"""
-
-# === アセスメント評価用のプロンプト定義 ===
-ASSESSMENT_PROMPTS = {
-    "pr_norm_ja": {
-        "step": "normalize",
-        "name": "Normalize JA",
-        "content": "入力テキストを以下のセクションに分類し、各エントリを120字以内で要約してください。出力は JSON: {\"items\":[{\" :[{\"docId\":\"...\",\"section\":\"dept_status|dept_issues|solutions|vision|training_reflection|next1to2y\",\"summary\":\"...\",\"text\":\"...\"}], \"confidence\":\"low|med|high\"} のみ。"
-    },
-    "pr_evi_ja": {
-        "step": "evidence",
-        "name": "Evidence JA",
-        "content": "正規化されたテキストから評価根拠を抽出。各抜粋は原文30〜200字、targetは SF|VCI|OL|DE|LA|CV|MR|MN、polarityは pos|neg|neutral。出力は JSON: {\"list\":[{\"id\":\"EV-1\",\"docId\":\"...\",\"polarity\":\"pos\",\"target\":\"DE\",\"quote\":\"...\",\"note\":\"...\"}]} のみ。"
-    },
-    "pr_score_ja": {
-        "step": "score",
-        "name": "Score JA",
-        "content": "Evidenceに基づき各項目を1-5で採点。理由は100〜180字で、必ず evidenceIds を含める。獲得度は四捨五入で算出: solution=0.40*VCI+0.30*DE+0.30*LA、achievement=0.50*DE+0.30*OL+0.20*LA、management=0.40*OL+0.40*SF+0.20*MR。JSONのみで返答。"
-    }
-}
-
-ACQUISITION_FORMULAS = {
-    "solution": {"VCI": 0.40, "DE": 0.30, "LA": 0.30},
-    "achievement": {"DE": 0.50, "OL": 0.30, "LA": 0.20},
-    "management": {"OL": 0.40, "SF": 0.40, "MR": 0.20}
-}
-
-# 8つの管理項目
-MANAGEMENT_ITEMS = [
-    "役割認識",
-    "目標設定",
-    "計画立案",
-    "役割分担",
-    "動機付け",
-    "コミュニケーション",
-    "成果管理",
-    "部下指導"
+COMPETENCY_LABELS = [
+    ("戦略構想力", "戦略構想力"),
+    ("価値創出力", "価値創出力"),
+    ("組織運営力", "組織運営力"),
+    ("実行力", "実行力"),
+    ("学習・適用力", "学習・適用力"),
 ]
 
-# まとめシートの項目
-SUMMARY_SHEET_ITEMS = [
-    "リーダーのあり方",
-    "目標による管理の進め方",
-    "問題解決への取り組み方",
-    "効果的なチーム運営",
-    "メンバーのやる気を引き出す指導の進め方",
-    "メンバーの成長を促す育成の進め方",
-    "リーダーとしての自己成長"
+READINESS_LABELS = [
+    ("キャリアビジョン", "キャリアビジョン"),
+    ("使命感・志", "使命感・志"),
+    ("ネットワーク形成力", "ネットワーク形成力"),
 ]
 
-# 評価基準
-EVALUATION_CRITERIA = [
-    "ストレッチした目標表現に言及されている",
-    "目的・目標を分けて明確な目標表現をしようとしている",
-    "目標設定後メンバーから納得を引き出そうとしている",
-    "目標設定がメンバーの行動を決めると重要性を理解している",
-    "目標設定のための準備をしっかりと取ろうとしている",
-    "目標設定の重要性を表記している",
-    "目標設定は将来の成果を予め設定したものといった観点で表記されている",
-    "方針やビジョンと関連させようとした目標設定にしている"
-]
 
-def get_client():
-    """Claude APIクライアントを取得"""
-    # st.session_state.api_key=st.secrets["CLAUDE_API_KEY"]
-    if st.session_state.api_key:
-        return anthropic.Anthropic(api_key=st.session_state.api_key)
-    return None
+EvaluationPayload = Dict[str, Any]
 
-def scrape_course_info(url):
-    """講座情報をスクレイピング"""
-    try:
-        response = requests.get(url, timeout=10)
-        response.raise_for_status()
-        soup = BeautifulSoup(response.content, 'html.parser')
-        
-        title = soup.find('h1') or soup.find('title')
-        title_text = title.text.strip() if title else "講座情報"
-        
-        description = ""
-        for tag in soup.find_all(['p', 'div']):
-            text = tag.text.strip()
-            if len(text) > 50:
-                description += text + "\n"
-                if len(description) > 1000:
-                    break
-        
-        return {
-            "title": title_text,
-            "description": description[:1500],
-            "url": url
+
+@dataclass
+class StudentRecord:
+    name: str
+    inputs: Dict[str, str]
+    evaluation: Optional[EvaluationPayload] = None
+
+
+@st.cache_resource(show_spinner=False)
+def get_anthropic_client() -> Anthropic:
+    api_key = st.secrets.get("ANTHROPIC_API_KEY") if hasattr(st, "secrets") else None
+    if not api_key:
+        api_key = os.getenv("ANTHROPIC_API_KEY")
+    if not api_key:
+        raise ValueError("環境変数 ANTHROPIC_API_KEY が設定されていません。")
+    if Anthropic is None:
+        raise ImportError("anthropic パッケージが見つかりません。");
+    return Anthropic(api_key=api_key)
+
+
+def inject_global_styles() -> None:
+    st.markdown(
+        """
+        <style>
+        .stApp {
+            background-color: #F0F2F6;
+            font-family: "Noto Sans JP", "Segoe UI", sans-serif;
         }
-    except Exception as e:
-        st.error(f"URLから情報を取得できませんでした: {e}")
-        return None
-
-def extract_text_from_pdf(pdf_file):
-    """PDFファイルからテキストを抽出"""
-    try:
-        pdf_reader = PyPDF2.PdfReader(pdf_file)
-        text = ""
-        for page_num in range(len(pdf_reader.pages)):
-            page = pdf_reader.pages[page_num]
-            text += page.extract_text() + "\n"
-        return text
-    except Exception as e:
-        st.error(f"PDF読み込みエラー: {e}")
-        return None
-
-def save_pdf_to_session(pdf_file, course_id):
-    """PDFファイルをセッション状態に保存"""
-    if pdf_file is not None:
-        pdf_bytes = pdf_file.read()
-        pdf_file.seek(0)
-        pdf_base64 = base64.b64encode(pdf_bytes).decode('utf-8')
-        
-        if 'pdf_files' not in st.session_state:
-            st.session_state.pdf_files = {}
-        
-        st.session_state.pdf_files[course_id] = {
-            'filename': pdf_file.name,
-            'data': pdf_base64,
-            'uploaded_at': datetime.now().isoformat()
+        .block-container {
+            padding-top: 32px !important;
+            padding-bottom: 40px !important;
+            max-width: 1600px;
         }
-        return True
-    return False
-
-def get_pdf_from_session(course_id):
-    """セッション状態からPDFデータを取得"""
-    if 'pdf_files' in st.session_state and course_id in st.session_state.pdf_files:
-        pdf_data = st.session_state.pdf_files[course_id]
-        pdf_bytes = base64.b64decode(pdf_data['data'])
-        return pdf_bytes, pdf_data['filename']
-    return None, None
-
-def filter_text_with_exclude_keywords(text, exclude_keywords):
-    """除外キーワードを含む文を削除"""
-    if not exclude_keywords:
-        return text
-    
-    lines = text.split('\n')
-    filtered_lines = []
-    
-    for line in lines:
-        should_exclude = False
-        for keyword in exclude_keywords:
-            if keyword.lower() in line.lower():
-                should_exclude = True
-                break
-        if not should_exclude:
-            filtered_lines.append(line)
-    
-    return '\n'.join(filtered_lines)
-
-def generate_dummy_summary(participant_name, course_info):
-    """Claude APIを使用してダミーのまとめシートを生成"""
-    client = get_client()
-    if not client:
-        st.error("APIキーが設定されていません")
-        return None
-    
-    prompt = f"""
-    以下の研修を受講した「{participant_name}」として、まとめシートのダミーデータを作成してください。
-    
-    講座情報:
-    タイトル: {course_info.get('title', '研修')}
-    内容: {course_info.get('description', '')[:500]}
-    
-    以下の項目について、現実的で具体的な内容を記載してください：
-    
-    1. 受講者への期待（講師からの期待として）: 50-100文字
-    2. 受講に対する事前期待（受講者として）: 50-100文字
-    3. 各学習項目（7項目）: 各100-150文字程度で学んだ内容や気づきを記載
-    4. 職場で実践すること（2つのテーマ）: 各100-150文字程度で具体的な実践計画を記載
-    
-    必ずJSON形式で出力してください：
-    {{
-        "expectations_from_instructor": "講師からの期待",
-        "expectations_from_participant": "受講者の事前期待",
-        "learning_items": {{
-            "リーダーのあり方": "学んだ内容",
-            "目標による管理の進め方": "学んだ内容",
-            "問題解決への取り組み方": "学んだ内容",
-            "効果的なチーム運営": "学んだ内容",
-            "メンバーのやる気を引き出す指導の進め方": "学んだ内容",
-            "メンバーの成長を促す育成の進め方": "学んだ内容",
-            "リーダーとしての自己成長": "学んだ内容"
-        }},
-        "practice_themes": [
-            {{"theme": "テーマ1", "content": "具体的な実践内容"}},
-            {{"theme": "テーマ2", "content": "具体的な実践内容"}}
-        ]
-    }}
-    """
-    
-    try:
-        response = client.messages.create(
-            model="claude-sonnet-4-20250514",
-            max_tokens=3000,
-            messages=[{"role": "user", "content": prompt}]
-        )
-        
-        content = response.content[0].text
-        
-        import re
-        json_match = re.search(r'\{[\s\S]*\}', content)
-        
-        if json_match:
-            try:
-                dummy_summary = json.loads(json_match.group())
-                return dummy_summary
-            except json.JSONDecodeError:
-                pass
-        
-        return None
-        
-    except Exception as e:
-        st.error(f"ダミーデータの生成に失敗しました: {e}")
-        return None
-
-def generate_dummy_answers(pre_tasks, participant_name, course_info):
-    """Claude APIを使用してダミーの回答を生成"""
-    client = get_client()
-    if not client:
-        st.error("APIキーが設定されていません")
-        return None
-    
-    prompt = f"""
-    以下の事前課題に対して、受講者「{participant_name}」として現実的で具体的な回答を作成してください。
-    
-    講座情報:
-    タイトル: {course_info.get('title', '研修')}
-    内容: {course_info.get('description', '')[:500]}
-    
-    各管理項目について、以下の観点で回答してください：
-    - 実際の職場での具体的な問題認識
-    - 現実的な改善提案
-    - 中間管理職として直面しそうな悩み
-    
-    回答は日本語で、1つの回答につき100-200文字程度で作成してください。
-    
-    必ずJSON形式で出力してください：
-    {{
-        "役割認識": {{
-            "問題認識": "何が問題だと思っているか",
-            "改善案": "どうすれば良いと思うか"
-        }},
-        // 他の7項目も同様
-    }}
-    
-    事前課題の内容:
-    {json.dumps(pre_tasks, ensure_ascii=False, indent=2)}
-    """
-    
-    try:
-        response = client.messages.create(
-            model="claude-sonnet-4-20250514",
-            max_tokens=3000,
-            messages=[{"role": "user", "content": prompt}]
-        )
-        
-        content = response.content[0].text
-        
-        import re
-        json_match = re.search(r'\{[\s\S]*\}', content)
-        
-        if json_match:
-            try:
-                dummy_answers = json.loads(json_match.group())
-                return dummy_answers
-            except json.JSONDecodeError:
-                pass
-        
-        return None
-        
-    except Exception as e:
-        st.error(f"ダミーデータの生成に失敗しました: {e}")
-        return None
-
-def generate_pre_tasks(course_info, participant_name):
-    """Claude APIを使用して事前課題を生成"""
-    client = get_client()
-    if not client:
-        st.error("APIキーが設定されていません")
-        return None
-    
-    additional_content = ""
-    if 'pdf_content' in course_info and course_info['pdf_content']:
-        additional_content = f"\n\nPDF資料の内容:\n{course_info['pdf_content'][:2000]}"
-    
-    prompt = f"""
-    以下の講座情報を基に、受講者「{participant_name}」向けの事前課題を作成してください。
-
-    講座タイトル: {course_info['title']}
-    講座内容: {course_info['description'][:500]}
-    {additional_content}
-
-    以下の8つの管理項目それぞれについて、具体的な事前課題を作成してください。
-    各項目について「問題認識」と「改善案」の2つの質問を作成してください。
-
-    必ず以下の形式のJSONで出力してください：
-    {{
-        "役割認識": {{
-            "問題認識": "役割認識において現在どのような問題があると認識していますか？",
-            "改善案": "その問題を解決するためにどのような改善策が必要だと思いますか？"
-        }},
-        "目標設定": {{
-            "問題認識": "目標設定において現在どのような問題があると認識していますか？",
-            "改善案": "その問題を解決するためにどのような改善策が必要だと思いますか？"
-        }},
-        "計画立案": {{
-            "問題認識": "計画立案において現在どのような問題があると認識していますか？",
-            "改善案": "その問題を解決するためにどのような改善策が必要だと思いますか？"
-        }},
-        "役割分担": {{
-            "問題認識": "役割分担において現在どのような問題があると認識していますか？",
-            "改善案": "その問題を解決するためにどのような改善策が必要だと思いますか？"
-        }},
-        "動機付け": {{
-            "問題認識": "動機付けにおいて現在どのような問題があると認識していますか？",
-            "改善案": "その問題を解決するためにどのような改善策が必要だと思いますか？"
-        }},
-        "コミュニケーション": {{
-            "問題認識": "コミュニケーションにおいて現在どのような問題があると認識していますか？",
-            "改善案": "その問題を解決するためにどのような改善策が必要だと思いますか？"
-        }},
-        "成果管理": {{
-            "問題認識": "成果管理において現在どのような問題があると認識していますか？",
-            "改善案": "その問題を解決するためにどのような改善策が必要だと思いますか？"
-        }},
-        "部下指導": {{
-            "問題認識": "部下指導において現在どのような問題があると認識していますか？",
-            "改善案": "その問題を解決するためにどのような改善策が必要だと思いますか？"
-        }}
-    }}
-    """
-    
-    try:
-        response = client.messages.create(
-            model="claude-sonnet-4-20250514",
-            max_tokens=3000,
-            messages=[{"role": "user", "content": prompt}]
-        )
-        
-        content = response.content[0].text
-        
-        import re
-        json_match = re.search(r'\{[\s\S]*\}', content)
-        
-        if json_match:
-            try:
-                tasks = json.loads(json_match.group())
-                for item in MANAGEMENT_ITEMS:
-                    if item not in tasks:
-                        tasks[item] = {
-                            "問題認識": f"{item}において現在どのような問題があると認識していますか？具体的に記載してください。",
-                            "改善案": f"その問題を解決するためにどのような改善策が必要だと思いますか？実現可能な方法を記載してください。"
-                        }
-                return tasks
-            except json.JSONDecodeError:
-                pass
-        
-        tasks = {}
-        for item in MANAGEMENT_ITEMS:
-            tasks[item] = {
-                "問題認識": f"{item}において現在どのような問題があると認識していますか？具体的に記載してください。",
-                "改善案": f"その問題を解決するためにどのような改善策が必要だと思いますか？実現可能な方法を記載してください。"
-            }
-        return tasks
-        
-    except Exception as e:
-        st.error(f"事前課題の生成に失敗しました: {e}")
-        tasks = {}
-        for item in MANAGEMENT_ITEMS:
-            tasks[item] = {
-                "問題認識": f"{item}において現在どのような問題があると認識していますか？具体的に記載してください。",
-                "改善案": f"その問題を解決するためにどのような改善策が必要だと思いますか？実現可能な方法を記載してください。"
-            }
-        return tasks
-
-def evaluate_participant(pre_task_answers, summary_sheet):
-    """Claude APIを使用して受講者を評価（事前課題とまとめシート）"""
-    client = get_client()
-    if not client:
-        st.error("APIキーが設定されていません")
-        return None
-    
-    pre_task_answers_str = json.dumps(pre_task_answers, ensure_ascii=False, indent=2)
-    summary_sheet_str = json.dumps(summary_sheet, ensure_ascii=False, indent=2)
-    
-    if st.session_state.exclude_keywords:
-        pre_task_answers_str = filter_text_with_exclude_keywords(
-            pre_task_answers_str, 
-            st.session_state.exclude_keywords
-        )
-        summary_sheet_str = filter_text_with_exclude_keywords(
-            summary_sheet_str,
-            st.session_state.exclude_keywords
-        )
-    
-    prompt = st.session_state.evaluation_prompt_template.format(
-        pre_task_answers=pre_task_answers_str,
-        summary_sheet=summary_sheet_str,
-        evaluation_criteria=json.dumps(EVALUATION_CRITERIA, ensure_ascii=False, indent=2)
+        h1, h2, h3 {
+            color: #0f172a !important;
+        }
+        div[data-testid="stSidebar"] {
+            background: linear-gradient(180deg, #0d3b66 0%, #061b33 100%);
+            color: #f8fafc;
+            border-right: 1px solid rgba(255, 255, 255, 0.12);
+        }
+        div[data-testid="stSidebar"] * {
+            color: #e2f3ff !important;
+        }
+        div[data-testid="stSidebar"] h1,
+        div[data-testid="stSidebar"] h2,
+        div[data-testid="stSidebar"] h3,
+        div[data-testid="stSidebar"] label {
+            color: #f1f5f9 !important;
+        }
+        div[data-testid="stHeader"],
+        div[data-testid="stHeader"] * {
+            background-color: #F0F2F6 !important;
+            color: #0f172a !important;
+        }
+        section.main > div {
+            background-color: #F0F2F6 !important;
+        }
+        .streamlit-expanderHeader {
+            font-weight: 600;
+            background-color: rgba(148, 163, 184, 0.15);
+            border-radius: 12px;
+        }
+        .custom-divider {
+            margin: 32px 0;
+            border-bottom: 1px solid #d4dbe6;
+        }
+        .metric-chip {
+            border-radius: 14px;
+            padding: 4px 12px;
+            background: rgba(59, 130, 246, 0.12);
+            color: #1d4ed8;
+            font-size: 12px;
+            font-weight: 600;
+        }
+        .stTextInput > div > div > input,
+        .stTextArea textarea {
+            background: linear-gradient(135deg, #ffffff 0%, #eef2ff 100%);
+            border: 1px solid #c7d2fe;
+            border-radius: 12px;
+            color: #0f172a;
+        }
+        .stTextInput > div > div > input:focus,
+        .stTextArea textarea:focus {
+            outline: 2px solid #6366f1;
+            box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.25);
+        }
+        .stTextInput > label,
+        .stTextArea > label,
+        label[class^="css-"] {
+            color: #1f2937 !important;
+            font-weight: 600;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
     )
-    
-    try:
-        response = client.messages.create(
-            model="claude-sonnet-4-20250514",
-            max_tokens=2000,
-            messages=[{"role": "user", "content": prompt}]
-        )
-        
-        content = response.content[0].text
-        import re
-        json_match = re.search(r'\{.*\}', content, re.DOTALL)
-        if json_match:
-            return json.loads(json_match.group())
-        else:
-            return None
-    except Exception as e:
-        st.error(f"評価の生成に失敗しました: {e}")
+
+
+def extract_json_from_text(text: str) -> Optional[str]:
+    start = text.find("{")
+    if start == -1:
         return None
-
-# === アセスメント評価用の関数 ===
-def _call_claude(client, system_prompt, user_content):
-    """Claude API呼び出しの共通ラッパー"""
-    try:
-        response = client.messages.create(
-            model="claude-sonnet-4-20250514",
-            max_tokens=4000,
-            messages=[
-                {"role": "user", "content": f"System: {system_prompt}\n\nUser: {user_content}\n\nPlease respond with valid JSON only."}
-            ]
-        )
-        
-        content = response.content[0].text
-        import re
-        json_match = re.search(r'\{[\s\S]*\}', content)
-        
-        if json_match:
-            return json.loads(json_match.group())
-        else:
-            return json.loads(content)
-    except Exception as e:
-        st.error(f"Claude API エラー: {e}")
-        return None
-
-def _calculate_acquisition_scores(scores):
-    """獲得能力スコアを計算する"""
-    acq_scores = {}
-    base_scores = {**scores.get('competencies', {}), **scores.get('readiness', {})}
-    
-    for acq_name, formula in ACQUISITION_FORMULAS.items():
-        total_score = 0
-        for comp, weight in formula.items():
-            total_score += base_scores.get(comp, {'score': 0}).get('score', 0) * weight
-        acq_scores[acq_name] = round(total_score)
-    return acq_scores
-
-def run_assessment_evaluation_pipeline(user_input_df):
-    """3ステップの評価パイプラインを実行するオーケストレーター"""
-    full_text = ""
-    for _, row in user_input_df.iterrows():
-        if row['あなたの考え'] and row['あなたの考え'].strip():
-            full_text += f"## {row['項目']}\n\n{row['あなたの考え']}\n\n"
-
-    if not full_text:
-        st.warning("入力がありません。")
-        return None
-
-    try:
-        client = get_client()
-        if not client:
-            st.error("APIキーが設定されていません")
-            return None
-            
-        final_result = {}
-
-        # st.statusの使用方法を変更（expandパラメータを削除）
-        with st.spinner("評価パイプラインを実行中..."):
-            # ステップ1
-            st.info("ステップ1/3: テキストを正規化しています...")
-            normalized_data = _call_claude(
-                client,
-                ASSESSMENT_PROMPTS["pr_norm_ja"]["content"],
-                f"入力データ(JSON):\n{json.dumps({'input': {'text': full_text}})}"
-            )
-            if not normalized_data:
-                st.error("正規化処理に失敗しました")
-                return None
-            final_result["normalized"] = normalized_data
-            st.success("ステップ1/3: 正規化完了")
-
-            # ステップ2
-            st.info("ステップ2/3: 評価エビデンスを抽出しています...")
-            evidence_data = _call_claude(
-                client,
-                ASSESSMENT_PROMPTS["pr_evi_ja"]["content"],
-                f"正規化入力:\n{json.dumps(normalized_data)}"
-            )
-            if not evidence_data:
-                st.error("エビデンス抽出に失敗しました")
-                return None
-            final_result["evidence"] = evidence_data
-            st.success("ステップ2/3: エビデンス抽出完了")
-
-            # ステップ3
-            st.info("ステップ3/3: 最終スコアを算出しています...")
-            user_content = f"正規化入力:\n{json.dumps(normalized_data)}\n---\nエビデンス:\n{json.dumps(evidence_data)}"
-            scores = _call_claude(
-                client,
-                ASSESSMENT_PROMPTS["pr_score_ja"]["content"],
-                user_content
-            )
-            
-            if not scores:
-                st.error("スコア算出に失敗しました")
-                return None
-                
-            acquisition_scores = _calculate_acquisition_scores(scores)
-            scores["acquisition"] = acquisition_scores
-            final_result["scores"] = scores
-            st.success("ステップ3/3: スコア算出完了")
-            
-            st.success("✅ 評価パイプライン完了！")
-
-        return final_result
-
-    except Exception as e:
-        st.error(f"予期せぬエラーが発生しました: {e}")
-    
+    depth = 0
+    for idx, char in enumerate(text[start:], start=start):
+        if char == "{":
+            depth += 1
+        elif char == "}":
+            depth -= 1
+            if depth == 0:
+                return text[start : idx + 1]
     return None
 
-# === メインアプリケーション ===
-def main():
-    st.title("🎓 統合管理システム")
-    
-    # システム選択
-    if st.session_state.system_mode is None:
-        st.header("システムを選択してください")
-        
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            st.subheader("📚 研修管理システム")
-            st.write("研修の事前課題作成、まとめシート管理、受講者評価を行います。")
-            if st.button("研修管理システムを使用", type="primary", use_container_width=True):
-                st.session_state.system_mode = "training"
-                st.rerun()
-        
-        with col2:
-            st.subheader("📊 昇進アセスメント評価")
-            st.write("AIによる昇進アセスメント評価を3ステップで実行します。")
-            if st.button("アセスメント評価を使用", type="primary", use_container_width=True):
-                st.session_state.system_mode = "assessment"
-                st.rerun()
-    
-    # 研修管理システム
-    elif st.session_state.system_mode == "training":
-        # サイドバー
-        with st.sidebar:
-            st.header("📋 メニュー")
-            
-            if st.button("🏠 システム選択に戻る"):
-                st.session_state.system_mode = None
-                st.rerun()
-            
-            st.divider()
-            
-            # APIキー設定
-            # with st.expander("🔑 API設定", expanded=not st.session_state.api_key):
-            #     api_key_input = st.text_input(
-            #         "Claude API Key",
-            #         value=st.session_state.api_key,
-            #         type="password",
-            #         help="Anthropic Claude APIのキーを入力してください"
-            #     )
-            #     if st.button("APIキーを保存", type="primary"):
-            #         if api_key_input:
-            #             st.session_state.api_key = api_key_input
-            #             st.success("✅ APIキーを保存しました")
-            #             st.rerun()
-            #         else:
-            #             st.error("APIキーを入力してください")
-            
-            if not st.session_state.api_key:
-                st.warning("⚠️ APIキーを設定してください")
-            else:
-                st.success("✅ API設定済み")
-            
-            st.divider()
-            
-            menu = st.radio(
-                "機能を選択",
-                ["評価設定", "講座情報入力", "事前課題作成", "まとめシート", 
-                 "受講者評価"]
+
+def call_claude(student_inputs: Dict[str, str]) -> Dict[str, Dict[str, Dict[str, str]]]:
+    client = get_anthropic_client()
+
+    system_prompt = (
+        "You are an executive coaching assistant. Evaluate participants "
+        "in Japanese, returning concise, actionable feedback."
+    )
+
+    input_block = []
+    for section, value in student_inputs.items():
+        input_block.append(f"### {section}\n{value.strip() or '未記入'}")
+    joined_inputs = "\n\n".join(input_block)
+
+    user_prompt = f"""
+あなたは経営リーダー育成プログラムの評価者です。以下の受講生の入力内容をもとに、各カテゴリを5点満点の整数で評価し、点数の根拠を明確に説明してください。根拠には「どのような行動・思考ができている／不足しているため何点なのか」を端的に示してください。必ず以下のJSONフォーマットのみを出力し、余計な説明は付けないでください。スコアは1〜5の整数を使用してください。
+
+期待するJSON構造:
+{{
+  "competency": {{
+    "戦略構想力": {{"score": 1-5, "reason": "..."}},
+    "価値創出力": {{"score": 1-5, "reason": "..."}},
+    "組織運営力": {{"score": 1-5, "reason": "..."}},
+    "実行力": {{"score": 1-5, "reason": "..."}},
+    "学習・適用力": {{"score": 1-5, "reason": "..."}}
+  }},
+  "readiness": {{
+    "キャリアビジョン": {{"score": 1-5, "reason": "..."}},
+    "使命感・志": {{"score": 1-5, "reason": "..."}},
+    "ネットワーク形成力": {{"score": 1-5, "reason": "..."}}
+  }},
+  "overall_summary": "受講生の全体まとめ"
+}}
+
+受講生の入力:
+{joined_inputs}
+"""
+
+    response = client.messages.create(
+        model="claude-opus-4-20250514",
+        max_tokens=1200,
+        system=system_prompt,
+        messages=[
+            {
+                "role": "user",
+                "content": user_prompt,
+            }
+        ],
+    )
+
+    if not response.content:
+        raise ValueError("Claudeの応答が空でした。")
+
+    text_content = "".join(part.text for part in response.content if hasattr(part, "text"))
+    if not text_content:
+        raise ValueError("Claudeの応答にテキストが含まれていません。")
+
+    try:
+        payload = json.loads(text_content)
+    except json.JSONDecodeError:
+        json_candidate = extract_json_from_text(text_content)
+        if json_candidate is None:
+            preview = text_content[:200].replace("\n", " ")
+            raise ValueError(
+                f"Claudeの応答をJSONとして解釈できませんでした。応答内容: {preview}"
             )
-        
-        # APIキーチェック
-        if not st.session_state.api_key and menu not in ["講座情報入力"]:
-            st.error("🔑 この機能を使用するにはAPIキーの設定が必要です。サイドバーでAPIキーを設定してください。")
-            return
-        
-        # 各機能の実装
-        if menu == "講座情報入力":
-            st.header("講座情報入力")
-            
-            col1, col2 = st.columns([2, 1])
-            
-            with col1:
-                st.subheader("📝 講座情報")
-                url = st.text_input(
-                    "講座URL",
-                    placeholder="https://school.jma.or.jp/products/detail.php?product_id=100132",
-                    help="講座のURLを入力してください"
+        payload = json.loads(json_candidate)
+
+    for section in ("competency", "readiness"):
+        if section not in payload:
+            raise ValueError(f"Claudeの応答に{section}セクションがありません。")
+        for label, _ in (COMPETENCY_LABELS if section == "competency" else READINESS_LABELS):
+            section_payload = payload[section]
+            if label not in section_payload:
+                raise ValueError(f"{label} の評価が欠落しています。")
+            score = section_payload[label].get("score")
+            if not isinstance(score, int) or not (1 <= score <= 5):
+                raise ValueError(f"{label} のスコアが1〜5の整数ではありません: {score}")
+
+    return payload
+
+
+def ensure_session_state() -> None:
+    if "students" not in st.session_state:
+        st.session_state.students: List[StudentRecord] = []
+    if "cohort_summary" not in st.session_state:
+        st.session_state.cohort_summary = None
+    if "registration_form_version" not in st.session_state:
+        st.session_state.registration_form_version = 0
+
+
+def add_student_record(name: str, inputs: Dict[str, str]) -> None:
+    record = StudentRecord(name=name, inputs=inputs)
+    st.session_state.students.append(record)
+    st.session_state.cohort_summary = None
+
+
+def set_student_evaluation(index: int, evaluation: EvaluationPayload) -> None:
+    st.session_state.students[index].evaluation = evaluation
+    st.session_state.cohort_summary = None
+
+
+def render_radar_chart(
+    title: str,
+    labels: List[str],
+    data_series: Dict[str, List[int]],
+    *,
+    chart_key: Optional[str] = None,
+):
+    fig = go.Figure()
+    angles = labels + [labels[0]]
+    for series_name, scores in data_series.items():
+        values = scores + [scores[0]]
+        fig.add_trace(
+            go.Scatterpolar(r=values, theta=angles, fill="toself", name=series_name)
+        )
+    fig.update_layout(polar={"radialaxis": {"range": [0, 5], "tickmode": "linear", "dtick": 1}}, showlegend=True, title=title)
+    st.plotly_chart(fig, use_container_width=True, key=chart_key)
+
+
+def render_divider() -> None:
+    st.markdown("<div class='custom-divider'></div>", unsafe_allow_html=True)
+
+
+def render_score_cards(section_title: str, entries: List[Any]) -> None:
+    if not entries:
+        return
+
+    st.markdown(f"### {section_title}")
+    columns = 2 if len(entries) > 2 else len(entries)
+    cols = st.columns(columns or 1)
+
+    def score_card_html(label: str, score: int, reason: str) -> str:
+        safe_label = html.escape(label)
+        safe_reason = html.escape(reason)
+        return f"""
+<div style=\"border:1px solid #d6e2ff; border-radius:18px; padding:18px; background:linear-gradient(145deg, #ffffff 0%, #f2f7ff 100%); height:100%; box-shadow:0 12px 22px rgba(15, 23, 42, 0.08);\">
+  <div style=\"display:flex; justify-content:space-between; align-items:center;\">
+    <div style=\"font-weight:600; font-size:15px; color:#1f2937;\">{safe_label}</div>
+    <span style=\"font-size:12px; font-weight:600; color:#1d4ed8; background:rgba(29, 78, 216, 0.12); padding:4px 10px; border-radius:999px;\">評価</span>
+  </div>
+  <div style=\"margin:14px 0 12px; font-size:30px; font-weight:700; color:#1d4ed8;\">{score}点</div>
+  <div style=\"font-size:13px; line-height:1.7; color:#0f172a;\">{safe_reason}</div>
+</div>
+"""
+
+    for idx, (label, entry) in enumerate(entries):
+        column = cols[idx % (columns or 1)]
+        with column:
+            st.markdown(score_card_html(label, entry["score"], entry["reason"]), unsafe_allow_html=True)
+
+
+def render_metric_row(metrics: List[Dict[str, str]]) -> None:
+    if not metrics:
+        return
+
+    cols = st.columns(len(metrics))
+
+    def metric_html(title: str, value: str, caption: str, accent: str) -> str:
+        safe_title = html.escape(title)
+        safe_value = html.escape(value)
+        safe_caption = html.escape(caption)
+        return f"""
+<div style=\"border-radius:16px; padding:18px 20px; background:{accent}; color:#0f172a; box-shadow:0 8px 18px rgba(15, 23, 42, 0.08);\">
+  <div style=\"font-size:13px; font-weight:600; opacity:0.75;\">{safe_title}</div>
+  <div style=\"font-size:30px; font-weight:700; margin:6px 0 10px;\">{safe_value}</div>
+  <div style=\"font-size:12px; opacity:0.75;\">{safe_caption}</div>
+</div>
+"""
+
+    accents = ["linear-gradient(135deg, #dce9ff 0%, #f1f6ff 100%)", "linear-gradient(135deg, #f7d9ff 0%, #fdefff 100%)", "linear-gradient(135deg, #dff8ff 0%, #f1fcff 100%)", "linear-gradient(135deg, #ffe5d4 0%, #fff3ea 100%)"]
+
+    for idx, metric in enumerate(metrics):
+        accent = accents[idx % len(accents)]
+        with cols[idx]:
+            st.markdown(
+                metric_html(
+                    metric["title"],
+                    metric["value"],
+                    metric.get("caption", ""),
+                    accent,
+                ),
+                unsafe_allow_html=True,
+            )
+
+
+def render_evaluation_overview(records: List[StudentRecord]) -> None:
+    total = len(records)
+    evaluated = [record for record in records if record.evaluation]
+    evaluated_count = len(evaluated)
+    pending_count = total - evaluated_count
+
+    metrics = [
+        {
+            "title": "登録済み受講生",
+            "value": f"{total}名",
+            "caption": "現在ダッシュボードに登録されている人数",
+        },
+        {
+            "title": "評価完了",
+            "value": f"{evaluated_count}名",
+            "caption": f"未評価 {pending_count}名",
+        },
+    ]
+
+    stats = compute_cohort_stats(records)
+    if stats:
+        comp_avg = sum(stats["avg_competency"].values()) / len(COMPETENCY_LABELS)
+        readiness_avg = sum(stats["avg_readiness"].values()) / len(READINESS_LABELS)
+        overall_avg = (comp_avg + readiness_avg) / 2
+        metrics.append(
+            {
+                "title": "平均総合スコア",
+                "value": f"{overall_avg:.1f}点",
+                "caption": "コンピテンシーと経営者準備度の平均",
+            }
+        )
+
+    render_metric_row(metrics)
+
+
+def render_student_card(
+    record: StudentRecord,
+    show_header: bool = True,
+    *,
+    key_prefix: Optional[str] = None,
+):
+    if record.evaluation is None:
+        st.warning("まだ評価が実行されていません。")
+        return
+
+    if show_header:
+        st.subheader(f"{record.name} の評価")
+
+    competency_scores = []
+    readiness_scores = []
+    competency_entries = []
+    readiness_entries = []
+
+    for label, _ in COMPETENCY_LABELS:
+        entry = record.evaluation["competency"][label]
+        competency_scores.append(entry["score"])
+        competency_entries.append((label, entry))
+
+    for label, _ in READINESS_LABELS:
+        entry = record.evaluation["readiness"][label]
+        readiness_scores.append(entry["score"])
+        readiness_entries.append((label, entry))
+
+    comp_avg = sum(competency_scores) / len(COMPETENCY_LABELS)
+    readiness_avg = sum(readiness_scores) / len(READINESS_LABELS)
+    all_entries = competency_entries + readiness_entries
+    top_area, top_entry = max(all_entries, key=lambda item: item[1]["score"])
+    growth_area, growth_entry = min(all_entries, key=lambda item: item[1]["score"])
+
+    render_metric_row(
+        [
+            {
+                "title": "平均コンピテンシー",
+                "value": f"{comp_avg:.1f}点",
+                "caption": "全5指標の平均スコア",
+            },
+            {
+                "title": "平均経営者準備度",
+                "value": f"{readiness_avg:.1f}点",
+                "caption": "全3指標の平均スコア",
+            },
+            {
+                "title": "強み/伸びしろ",
+                "value": f"{top_area} {top_entry['score']}点",
+                "caption": f"課題: {growth_area} {growth_entry['score']}点",
+            },
+        ]
+    )
+
+    render_score_cards("コンピテンシー評価", competency_entries)
+    render_score_cards("経営者準備度評価", readiness_entries)
+
+    st.markdown("---")
+    st.markdown(f"**受講生の全体まとめ:** {record.evaluation.get('overall_summary', '（未提供）')}")
+
+    prefix = key_prefix or record.name
+    normalized_prefix = prefix.replace(" ", "_")
+
+    render_radar_chart(
+        f"{record.name} - コンピテンシー評価",
+        [label for label, _ in COMPETENCY_LABELS],
+        {record.name: competency_scores},
+        chart_key=f"{normalized_prefix}_competency_radar",
+    )
+    render_radar_chart(
+        f"{record.name} - 経営者準備度",
+        [label for label, _ in READINESS_LABELS],
+        {record.name: readiness_scores},
+        chart_key=f"{normalized_prefix}_readiness_radar",
+    )
+
+
+def compute_cohort_stats(records: List[StudentRecord]):
+    evaluated_records = [record for record in records if record.evaluation]
+    if not evaluated_records:
+        return None
+
+    competency_totals = {label: 0 for label, _ in COMPETENCY_LABELS}
+    readiness_totals = {label: 0 for label, _ in READINESS_LABELS}
+
+    for record in evaluated_records:
+        for label, _ in COMPETENCY_LABELS:
+            competency_totals[label] += record.evaluation["competency"][label]["score"]
+        for label, _ in READINESS_LABELS:
+            readiness_totals[label] += record.evaluation["readiness"][label]["score"]
+
+    student_count = len(evaluated_records)
+    competency_avg = {label: round(total / student_count, 2) for label, total in competency_totals.items()}
+    readiness_avg = {label: round(total / student_count, 2) for label, total in readiness_totals.items()}
+
+    return {
+        "avg_competency": competency_avg,
+        "avg_readiness": readiness_avg,
+        "student_count": student_count,
+    }
+
+
+def build_cohort_summary(stats: Dict[str, Dict[str, float]]) -> str:
+    competency_sorted = sorted(stats["avg_competency"].items(), key=lambda x: x[1], reverse=True)
+    readiness_sorted = sorted(stats["avg_readiness"].items(), key=lambda x: x[1], reverse=True)
+
+    top_comp = [label for label, score in competency_sorted if score == competency_sorted[0][1]]
+    bottom_comp = [label for label, score in competency_sorted if score == competency_sorted[-1][1]]
+    top_ready = [label for label, score in readiness_sorted if score == readiness_sorted[0][1]]
+    bottom_ready = [label for label, score in readiness_sorted if score == readiness_sorted[-1][1]]
+
+    summary_parts = [
+        f"全{stats['student_count']}名の平均スコアで最も高かったのは {', '.join(top_comp)} です。",
+        f"一方、伸びしろが大きいのは {', '.join(bottom_comp)} でした。",
+        f"経営者準備度では {', '.join(top_ready)} が相対的に高く、 {', '.join(bottom_ready)} が課題として浮かび上がっています。",
+    ]
+
+    return " ".join(summary_parts)
+
+
+def render_cohort_section(records: List[StudentRecord]):
+    st.header("受講生全体の可視化")
+    evaluated_records = [record for record in records if record.evaluation]
+    stats = compute_cohort_stats(records)
+    if not stats:
+        st.session_state.cohort_summary = None
+        st.info("まだ評価済みの受講生はいません。")
+        return
+
+    cohort_comp_avg = sum(stats["avg_competency"].values()) / len(COMPETENCY_LABELS)
+    cohort_ready_avg = sum(stats["avg_readiness"].values()) / len(READINESS_LABELS)
+    top_competency = max(stats["avg_competency"].items(), key=lambda item: item[1])
+    top_readiness = max(stats["avg_readiness"].items(), key=lambda item: item[1])
+
+    render_metric_row(
+        [
+            {
+                "title": "平均コンピテンシー",
+                "value": f"{cohort_comp_avg:.1f}点",
+                "caption": "全受講生の5指標平均",
+            },
+            {
+                "title": "平均経営者準備度",
+                "value": f"{cohort_ready_avg:.1f}点",
+                "caption": "全受講生の3指標平均",
+            },
+            {
+                "title": "相対的な強み",
+                "value": f"{top_competency[0]} / {top_readiness[0]}",
+                "caption": "最もスコアが高かったカテゴリ",
+            },
+        ]
+    )
+
+    render_radar_chart(
+        "平均コンピテンシー",
+        [label for label, _ in COMPETENCY_LABELS],
+        {
+            "平均": [
+                stats["avg_competency"][label]
+                for label, _ in COMPETENCY_LABELS
+            ]
+        },
+        chart_key="cohort_avg_competency",
+    )
+    render_radar_chart(
+        "平均経営者準備度",
+        [label for label, _ in READINESS_LABELS],
+        {
+            "平均": [
+                stats["avg_readiness"][label]
+                for label, _ in READINESS_LABELS
+            ]
+        },
+        chart_key="cohort_avg_readiness",
+    )
+
+    multi_series_competency = {}
+    multi_series_readiness = {}
+    for record in evaluated_records:
+        multi_series_competency[record.name] = [
+            record.evaluation["competency"][label]["score"] for label, _ in COMPETENCY_LABELS
+        ]
+        multi_series_readiness[record.name] = [
+            record.evaluation["readiness"][label]["score"] for label, _ in READINESS_LABELS
+        ]
+
+    render_radar_chart(
+        "受講生比較 - コンピテンシー",
+        [label for label, _ in COMPETENCY_LABELS],
+        multi_series_competency,
+        chart_key="cohort_compare_competency",
+    )
+    render_radar_chart(
+        "受講生比較 - 経営者準備度",
+        [label for label, _ in READINESS_LABELS],
+        multi_series_readiness,
+        chart_key="cohort_compare_readiness",
+    )
+
+    if st.session_state.cohort_summary is None:
+        st.session_state.cohort_summary = build_cohort_summary(stats)
+
+    st.markdown(f"**受講生全体まとめ:** {st.session_state.cohort_summary}")
+
+
+def render_individual_results(records: List[StudentRecord]):
+    st.subheader("受講生個別結果")
+    evaluated_records = [record for record in records if record.evaluation]
+    if not evaluated_records:
+        st.info("まだ評価済みの受講生がありません。評価を実行してください。")
+        return
+
+    if len(evaluated_records) == 1:
+        record = evaluated_records[0]
+        st.markdown(f"### {record.name} の評価詳細")
+        render_student_card(record, show_header=False, key_prefix=f"individual_single_{record.name}")
+        return
+
+    options = {record.name: record for record in evaluated_records}
+    selected_name = st.selectbox(
+        "結果を確認したい受講生を選択",
+        list(options.keys()),
+        key="individual_result_select",
+        help="比較したい受講生を選択すると詳細が表示されます",
+    )
+    selected_record = options[selected_name]
+    st.markdown(f"### {selected_record.name} の評価詳細")
+    render_student_card(
+        selected_record,
+        show_header=False,
+        key_prefix=f"individual_select_{selected_name}",
+    )
+
+
+REGISTRATION_FIELD_KEYS = {
+    "name": "registration_name",
+    "mgmt_action_1": "registration_mgmt_action_1",
+    "mgmt_action_2": "registration_mgmt_action_2",
+    "mgmt_result_1": "registration_mgmt_result_1",
+    "mgmt_result_2": "registration_mgmt_result_2",
+    "mgmt_learnings": "registration_mgmt_learnings",
+    "manage_awareness_1": "registration_manage_awareness_1",
+    "manage_awareness_2": "registration_manage_awareness_2",
+    "manage_awareness_3": "registration_manage_awareness_3",
+    "manage_ten_year": "registration_manage_ten_year",
+    "vision": "registration_vision",
+    "action_plan": "registration_action_plan",
+    "values": "registration_values",
+}
+
+
+def reset_registration_form() -> None:
+    st.session_state.registration_form_version += 1
+
+
+def render_registration_page() -> None:
+    version = st.session_state.registration_form_version
+
+    def widget_key(field: str) -> str:
+        return f"{REGISTRATION_FIELD_KEYS[field]}_{version}"
+
+    st.header("受講生の登録")
+    st.caption("必要事項を入力して受講生を登録してください。評価は別ページで実行できます。")
+    st.markdown("<span class='metric-chip'>STEP 1</span> 受講生情報の入力", unsafe_allow_html=True)
+    st.write("各セクションを展開し、現状の取り組みや気づきを整理してください。")
+
+    with st.form("student_form"):
+        name = st.text_input(
+            "受講生名",
+            key=widget_key("name"),
+            placeholder="例：田中 太郎",
+            help="評価結果に表示される氏名を入力してください",
+        )
+
+        with st.expander("管理課題", expanded=True):
+            mgmt_col1, mgmt_col2 = st.columns(2)
+            with mgmt_col1:
+                mgmt_action_1 = st.text_area(
+                    "①具体的な取り組み(ｱｸｼｮﾝﾗｰﾆﾝｸﾞの学びから)",
+                    key=widget_key("mgmt_action_1"),
+                    placeholder="研修で学んだ内容をどのように実践したかを入力",
                 )
-                
-                uploaded_file = st.file_uploader(
-                    "講座資料PDF（オプション）",
-                    type=['pdf'],
-                    help="講座の詳細資料やシラバスなどのPDFファイルをアップロードできます"
+                mgmt_action_2 = st.text_area(
+                    "②具体的な取り組み（職場で実践したこと）",
+                    key=widget_key("mgmt_action_2"),
+                    placeholder="現場での具体的なアクションや仕組み化の内容",
                 )
-                
-                if st.button("📥 講座情報を取得", type="primary", use_container_width=True):
-                    if url:
-                        with st.spinner("講座情報を取得中..."):
-                            course_info = scrape_course_info(url)
-                            if course_info:
-                                st.session_state.course_info = course_info
-                                
-                                if uploaded_file:
-                                    pdf_text = extract_text_from_pdf(uploaded_file)
-                                    if pdf_text:
-                                        st.session_state.course_info['pdf_content'] = pdf_text[:5000]
-                                        st.session_state.course_info['pdf_filename'] = uploaded_file.name
-                                        save_pdf_to_session(uploaded_file, 'default')
-                                
-                                st.success("✅ 講座情報を取得しました")
-                                st.rerun()
-                    else:
-                        st.error("URLを入力してください")
-            
-            with col2:
-                st.subheader("👥 受講者情報")
-                participant_name = st.text_input("受講者名", placeholder="山田太郎")
-                participant_id = st.text_input("受講者ID", placeholder="EMP001")
-                participant_dept = st.text_input("所属部署", placeholder="営業部")
-                
-                if st.button("➕ 受講者を追加", type="primary", use_container_width=True):
-                    if participant_name and participant_id:
-                        participant = {
-                            "name": participant_name,
-                            "id": participant_id,
-                            "department": participant_dept,
-                            "added_at": datetime.now().isoformat()
-                        }
-                        st.session_state.participants.append(participant)
-                        st.success(f"✅ 受講者「{participant_name}」を追加しました")
-                        st.rerun()
-                    else:
-                        st.error("受講者名とIDは必須です")
-            
-            # 講座情報の表示
-            if st.session_state.course_info:
-                st.divider()
-                st.subheader("📋 取得した講座情報")
-                
-                col1, col2 = st.columns([2, 1])
-                with col1:
-                    st.write(f"**タイトル:** {st.session_state.course_info['title']}")
-                    st.write(f"**URL:** {st.session_state.course_info['url']}")
-                    if 'pdf_filename' in st.session_state.course_info:
-                        st.write(f"**PDF資料:** 📄 {st.session_state.course_info['pdf_filename']}")
-                
-                with st.expander("詳細を表示"):
-                    st.write("**講座概要:**")
-                    st.write(st.session_state.course_info['description'])
-            
-            # 受講者リスト
-            if st.session_state.participants:
-                st.divider()
-                st.subheader("📊 登録済み受講者一覧")
-                
-                for idx, participant in enumerate(st.session_state.participants):
-                    col1, col2, col3, col4, col5 = st.columns([2, 2, 2, 2, 1])
-                    with col1:
-                        st.write(f"👤 {participant['name']}")
-                    with col2:
-                        st.write(f"ID: {participant['id']}")
-                    with col3:
-                        st.write(f"部署: {participant.get('department', '-')}")
-                    with col4:
-                        st.write(f"登録: {participant['added_at'][:10]}")
-                    with col5:
-                        if st.button("削除", key=f"del_{idx}", type="secondary"):
-                            st.session_state.participants.pop(idx)
-                            st.rerun()
-        
-        elif menu == "事前課題作成":
-            st.header("事前課題作成")
-            
-            if not st.session_state.course_info:
-                st.warning("先に講座情報を入力してください")
-            elif not st.session_state.participants:
-                st.warning("先に受講者を登録してください")
+            with mgmt_col2:
+                mgmt_result_1 = st.text_area(
+                    "①の対してのプロセス・結果",
+                    key=widget_key("mgmt_result_1"),
+                    placeholder="取り組みのプロセスや成果・課題を入力",
+                )
+                mgmt_result_2 = st.text_area(
+                    "②の対してのプロセス・結果",
+                    key=widget_key("mgmt_result_2"),
+                    placeholder="実践の結果やチームへの影響など",
+                )
+            mgmt_learnings = st.text_area(
+                "①②に対しての気づき",
+                key=widget_key("mgmt_learnings"),
+                placeholder="取り組みを通じて得た学びや次のアクション",
+            )
+
+        with st.expander("経営課題", expanded=True):
+            manage_awareness_col1, manage_awareness_col2 = st.columns(2)
+            with manage_awareness_col1:
+                manage_awareness_1 = st.text_area(
+                    "①私の危機感・機会感",
+                    key=widget_key("manage_awareness_1"),
+                    placeholder="事業・組織に関する危機感やチャンスを入力",
+                )
+                manage_awareness_3 = st.text_area(
+                    "③私の危機感・機会感",
+                    key=widget_key("manage_awareness_3"),
+                    placeholder="視座を変えた第三の視点があれば記載",
+                )
+            with manage_awareness_col2:
+                manage_awareness_2 = st.text_area(
+                    "②私の危機感・機会感",
+                    key=widget_key("manage_awareness_2"),
+                    placeholder="他部署や市場環境に関する気づきなど",
+                )
+                manage_ten_year = st.text_area(
+                    "10年先を見通した全社課題",
+                    key=widget_key("manage_ten_year"),
+                    placeholder="長期の経営課題や必要な変革について",
+                )
+
+        with st.expander("経営宣言", expanded=True):
+            vision = st.text_area(
+                "夢、ビジョン",
+                key=widget_key("vision"),
+                placeholder="自分が描く理想の組織・未来像",
+            )
+            action_plan = st.text_area(
+                "ビジョン実現のために、自身はどう行動するか。そのために自己をどう変えていくのか",
+                key=widget_key("action_plan"),
+                placeholder="実現に向けた具体的な行動と変化させたい点",
+            )
+            values = st.text_area(
+                "経営リーダーとして大切にしたい価値観（軸）、信念",
+                key=widget_key("values"),
+                placeholder="意思決定で守りたい価値観や信念",
+            )
+
+        submitted = st.form_submit_button("受講生を登録する", type="primary")
+
+        if submitted:
+            if not name.strip():
+                st.error("受講生名を入力してください。")
             else:
-                participant = st.selectbox(
-                    "受講者を選択",
-                    options=st.session_state.participants,
-                    format_func=lambda x: x['name']
-                )
-                
-                col1, col2, col3 = st.columns([1, 1, 1])
-                with col1:
-                    if st.button("📄 事前課題を生成", type="primary"):
-                        with st.spinner("事前課題を生成中..."):
-                            tasks = generate_pre_tasks(st.session_state.course_info, participant['name'])
-                            if tasks:
-                                st.session_state.pre_tasks[participant['id']] = tasks
-                                st.success("✅ 事前課題を生成しました")
-                                st.rerun()
-                
-                with col2:
-                    if participant['id'] in st.session_state.pre_tasks:
-                        st.info(f"📝 {participant['name']}さんの事前課題は生成済みです")
-                
-                with col3:
-                    if participant['id'] in st.session_state.pre_tasks:
-                        if st.button("🤖 ダミーデータ作成", type="secondary"):
-                            with st.spinner("ダミーデータを生成中..."):
-                                dummy_answers = generate_dummy_answers(
-                                    st.session_state.pre_tasks[participant['id']],
-                                    participant['name'],
-                                    st.session_state.course_info
-                                )
-                                if dummy_answers:
-                                    if 'dummy_answers' not in st.session_state:
-                                        st.session_state.dummy_answers = {}
-                                    st.session_state.dummy_answers[participant['id']] = dummy_answers
-                                    st.success("✅ ダミーデータを生成しました")
-                                    st.rerun()
-                
-                # 事前課題の表示と回答入力
-                if participant and participant['id'] in st.session_state.pre_tasks:
-                    st.subheader(f"📋 {participant['name']}さんの事前課題")
-                    
-                    st.info("各管理項目について、①何が問題だと思っているのか、②どうすれば良いと思うのか、を記載してください。")
-                    
-                    has_dummy = 'dummy_answers' in st.session_state and participant['id'] in st.session_state.dummy_answers
-                    if has_dummy:
-                        st.success("🤖 ダミーデータが入力欄に反映されています。必要に応じて編集してください。")
-                    
-                    answers = {}
-                    
-                    tabs = st.tabs(MANAGEMENT_ITEMS)
-                    
-                    for idx, item in enumerate(MANAGEMENT_ITEMS):
-                        with tabs[idx]:
-                            if item in st.session_state.pre_tasks[participant['id']]:
-                                task = st.session_state.pre_tasks[participant['id']][item]
-                                
-                                st.markdown(f"### {item}")
-                                
-                                dummy_value_problem = ""
-                                dummy_value_solution = ""
-                                if has_dummy and item in st.session_state.dummy_answers[participant['id']]:
-                                    dummy_data = st.session_state.dummy_answers[participant['id']][item]
-                                    dummy_value_problem = dummy_data.get('問題認識', '')
-                                    dummy_value_solution = dummy_data.get('改善案', '')
-                                
-                                existing_answers = st.session_state.evaluations.get(participant['id'], {}).get('pre_task_answers', {})
-                                existing_problem = existing_answers.get(item, {}).get('問題認識', '')
-                                existing_solution = existing_answers.get(item, {}).get('改善案', '')
-                                
-                                st.markdown("**① 何が問題だと思っているのか:**")
-                                if '問題認識' in task:
-                                    st.caption(task['問題認識'])
-                                problem = st.text_area(
-                                    "あなたの回答",
-                                    key=f"problem_{participant['id']}_{item}",
-                                    height=120,
-                                    value=dummy_value_problem if dummy_value_problem else existing_problem,
-                                    placeholder="現在直面している問題や課題を具体的に記載してください..."
-                                )
-                                
-                                st.divider()
-                                
-                                st.markdown("**② どうすれば良いと思うか:**")
-                                if '改善案' in task:
-                                    st.caption(task['改善案'])
-                                solution = st.text_area(
-                                    "あなたの回答",
-                                    key=f"solution_{participant['id']}_{item}",
-                                    height=120,
-                                    value=dummy_value_solution if dummy_value_solution else existing_solution,
-                                    placeholder="問題を解決するための改善策や対応方法を記載してください..."
-                                )
-                                
-                                answers[item] = {
-                                    "問題認識": problem,
-                                    "改善案": solution
-                                }
-                    
-                    st.divider()
-                    col1, col2, col3 = st.columns([1, 2, 1])
-                    with col2:
-                        button_cols = st.columns(2)
-                        with button_cols[0]:
-                            if st.button("💾 回答を保存", type="primary", use_container_width=True):
-                                if participant['id'] not in st.session_state.evaluations:
-                                    st.session_state.evaluations[participant['id']] = {}
-                                st.session_state.evaluations[participant['id']]['pre_task_answers'] = answers
-                                
-                                if 'dummy_answers' in st.session_state and participant['id'] in st.session_state.dummy_answers:
-                                    del st.session_state.dummy_answers[participant['id']]
-                                
-                                st.success("✅ 回答を保存しました")
-        
-        elif menu == "まとめシート":
-            st.header("まとめシート")
-            
-            if not st.session_state.participants:
-                st.warning("先に受講者を登録してください")
-            else:
-                participant = st.selectbox(
-                    "受講者を選択",
-                    options=st.session_state.participants,
-                    format_func=lambda x: x['name']
-                )
-                
-                st.subheader(f"📝 {participant['name']}さんのまとめシート")
-                
-                col1, col2, col3 = st.columns([1, 1, 1])
-                with col1:
-                    if st.button("🤖 ダミーデータ作成", type="secondary"):
-                        with st.spinner("まとめシートのダミーデータを生成中..."):
-                            dummy_summary = generate_dummy_summary(
-                                participant['name'],
-                                st.session_state.course_info
-                            )
-                            
-                            if dummy_summary:
-                                if 'dummy_summary' not in st.session_state:
-                                    st.session_state.dummy_summary = {}
-                                st.session_state.dummy_summary[participant['id']] = dummy_summary
-                                st.success("✅ ダミーデータを生成しました")
-                                st.rerun()
-                
-                has_dummy = 'dummy_summary' in st.session_state and \
-                           participant['id'] in st.session_state.dummy_summary
-                if has_dummy:
-                    st.success("🤖 ダミーデータが入力欄に反映されています。必要に応じて編集してください。")
-                
-                dummy_data = {}
-                if has_dummy:
-                    dummy_data = st.session_state.dummy_summary[participant['id']]
-                
-                existing_data = st.session_state.summary_sheets.get(participant['id'], {})
-                
-                summary_sheet = {}
-                
-                st.markdown("### 【受講者への期待】")
-                expectations_from_instructor = st.text_area(
-                    "受講者への期待",
-                    key=f"exp_instructor_{participant['id']}",
-                    height=100,
-                    value=dummy_data.get('expectations_from_instructor', '') if dummy_data else existing_data.get('expectations_from_instructor', ''),
-                    placeholder="この研修を通じて習得してほしいことや期待する成長..."
-                )
-                summary_sheet['expectations_from_instructor'] = expectations_from_instructor
-                
-                st.markdown("### 【受講に対する事前期待】《受講者記入》")
-                expectations_from_participant = st.text_area(
-                    "受講者の事前期待",
-                    key=f"exp_participant_{participant['id']}",
-                    height=100,
-                    value=dummy_data.get('expectations_from_participant', '') if dummy_data else existing_data.get('expectations_from_participant', ''),
-                    placeholder="この研修で学びたいことや課題解決への期待..."
-                )
-                summary_sheet['expectations_from_participant'] = expectations_from_participant
-                
-                st.divider()
-                
-                st.markdown("### 【研修当日ご記入欄】")
-                
-                tabs = st.tabs(SUMMARY_SHEET_ITEMS)
-                learning_items = {}
-                
-                for idx, item in enumerate(SUMMARY_SHEET_ITEMS):
-                    with tabs[idx]:
-                        st.markdown(f"#### {idx + 1}. {item}")
-                        
-                        dummy_value = ""
-                        if dummy_data and 'learning_items' in dummy_data:
-                            dummy_value = dummy_data['learning_items'].get(item, '')
-                        
-                        existing_value = existing_data.get('learning_items', {}).get(item, '')
-                        
-                        content = st.text_area(
-                            f"学んだ内容・気づき",
-                            key=f"item_{participant['id']}_{item}",
-                            height=150,
-                            value=dummy_value if dummy_value else existing_value,
-                            placeholder="このテーマで学んだことや新たな気づきを記載してください..."
-                        )
-                        learning_items[item] = content
-                
-                summary_sheet['learning_items'] = learning_items
-                
-                st.divider()
-                
-                st.markdown("### 【職場で実践すること】")
-                
-                practice_themes = []
-                
-                for i in range(2):
-                    st.markdown(f"#### テーマ{i+1}")
-                    
-                    dummy_theme = ""
-                    dummy_content = ""
-                    if dummy_data and 'practice_themes' in dummy_data and len(dummy_data['practice_themes']) > i:
-                        dummy_theme = dummy_data['practice_themes'][i].get('theme', '')
-                        dummy_content = dummy_data['practice_themes'][i].get('content', '')
-                    
-                    existing_theme = ""
-                    existing_content = ""
-                    if 'practice_themes' in existing_data and len(existing_data['practice_themes']) > i:
-                        existing_theme = existing_data['practice_themes'][i].get('theme', '')
-                        existing_content = existing_data['practice_themes'][i].get('content', '')
-                    
-                    col1, col2 = st.columns([1, 2])
-                    with col1:
-                        theme = st.text_input(
-                            f"テーマ名",
-                            key=f"theme_{participant['id']}_{i}",
-                            value=dummy_theme if dummy_theme else existing_theme,
-                            placeholder="実践テーマ"
-                        )
-                    with col2:
-                        content = st.text_area(
-                            f"具体的な実践内容",
-                            key=f"practice_{participant['id']}_{i}",
-                            height=100,
-                            value=dummy_content if dummy_content else existing_content,
-                            placeholder="いつ、どのように実践するか具体的に記載..."
-                        )
-                    
-                    practice_themes.append({
-                        "theme": theme,
-                        "content": content
-                    })
-                
-                summary_sheet['practice_themes'] = practice_themes
-                
-                st.divider()
-                col1, col2, col3 = st.columns([1, 2, 1])
-                with col2:
-                    if st.button("💾 まとめシートを保存", type="primary", use_container_width=True):
-                        st.session_state.summary_sheets[participant['id']] = summary_sheet
-                        
-                        if 'dummy_summary' in st.session_state and \
-                           participant['id'] in st.session_state.dummy_summary:
-                            del st.session_state.dummy_summary[participant['id']]
-                        
-                        st.success("✅ まとめシートを保存しました")
-        
-        elif menu == "受講者評価":
-            st.header("受講者評価")
-            
-            if not st.session_state.participants:
-                st.warning("先に受講者を登録してください")
-            else:
-                participant = st.selectbox(
-                    "受講者を選択",
-                    options=st.session_state.participants,
-                    format_func=lambda x: x['name']
-                )
-                
-                has_pre_task = participant['id'] in st.session_state.evaluations and \
-                              'pre_task_answers' in st.session_state.evaluations[participant['id']]
-                has_summary = participant['id'] in st.session_state.summary_sheets
-                
-                col1, col2 = st.columns(2)
-                with col1:
-                    if has_pre_task:
-                        st.success("✅ 事前課題: 完了")
-                    else:
-                        st.error("❌ 事前課題: 未完了")
-                with col2:
-                    if has_summary:
-                        st.success("✅ まとめシート: 完了")
-                    else:
-                        st.error("❌ まとめシート: 未完了")
-                
-                if st.button("AI評価を実行", disabled=not (has_pre_task and has_summary)):
-                    if has_pre_task and has_summary:
-                        with st.spinner("評価を生成中..."):
-                            evaluation = evaluate_participant(
-                                st.session_state.evaluations[participant['id']]['pre_task_answers'],
-                                st.session_state.summary_sheets[participant['id']]
-                            )
-                            
-                            if evaluation:
-                                if participant['id'] not in st.session_state.evaluations:
-                                    st.session_state.evaluations[participant['id']] = {}
-                                st.session_state.evaluations[participant['id']]['ai_evaluation'] = evaluation
-                                st.success("評価を完了しました")
-                    else:
-                        st.warning("事前課題とまとめシートの両方が必要です")
-                
-                if participant['id'] in st.session_state.evaluations and \
-                   'ai_evaluation' in st.session_state.evaluations[participant['id']]:
-                    st.subheader("評価結果")
-                    
-                    ai_eval = st.session_state.evaluations[participant['id']]['ai_evaluation']
-                    
-                    col1, col2, col3 = st.columns(3)
-                    with col1:
-                        st.metric("総合スコア", f"{ai_eval.get('total_score', 0)}/40点")
-                    with col2:
-                        avg_score = ai_eval.get('total_score', 0) / 8
-                        st.metric("平均スコア", f"{avg_score:.1f}/5.0")
-                    with col3:
-                        percentage = (ai_eval.get('total_score', 0) / 40) * 100
-                        st.metric("達成率", f"{percentage:.0f}%")
-                    
-                    st.subheader("詳細評価")
-                    
-                    for eval_item in ai_eval.get('evaluations', []):
-                        with st.expander(f"{eval_item['criteria']}  {eval_item['score']}/5点"):
-                            st.write(f"**評価理由:** {eval_item['reason']}")
-                    
-                    st.subheader("総合フィードバック")
-                    st.info(ai_eval.get('overall_feedback', ''))
-        
-        elif menu == "評価設定":
-            st.header("⚙️ 評価設定")
-            
-            # タブで設定項目を分ける
-            tab1, tab2 = st.tabs(["除外キーワード設定", "評価プロンプト設定"])
-            
-            with tab1:
-                st.subheader("🚫 除外キーワード設定")
-                st.info("評価時に無視するキーワードを設定できます。これらのキーワードを含む文は評価から除外されます。")
-                
-                new_keyword = st.text_input(
-                    "除外キーワードを追加",
-                    placeholder="例: ダミー、テスト、サンプル"
-                )
-                if st.button("➕ キーワードを追加", type="primary"):
-                    if new_keyword and new_keyword not in st.session_state.exclude_keywords:
-                        st.session_state.exclude_keywords.append(new_keyword)
-                        st.success(f"✅ 「{new_keyword}」を除外キーワードに追加しました")
-                        st.rerun()
-                
-                if st.session_state.exclude_keywords:
-                    st.write("**登録済み除外キーワード:**")
-                    cols = st.columns(4)
-                    for idx, keyword in enumerate(st.session_state.exclude_keywords):
-                        with cols[idx % 4]:
-                            col1, col2 = st.columns([3, 1])
-                            with col1:
-                                st.write(f"• {keyword}")
-                            with col2:
-                                if st.button("×", key=f"del_kw_{idx}"):
-                                    st.session_state.exclude_keywords.pop(idx)
-                                    st.rerun()
-                else:
-                    st.write("除外キーワードは設定されていません")
-            
-            with tab2:
-                st.subheader("📝 評価プロンプトテンプレート")
-                st.info("AI評価で使用するプロンプトをカスタマイズできます。変数は {pre_task_answers}, {summary_sheet}, {evaluation_criteria} が使用できます。")
-                
-                # デフォルトプロンプト
-                default_prompt = """以下の受講者の事前課題回答とまとめシートを基に、8つの評価基準それぞれについて5点満点で評価してください。
-
-事前課題回答:
-{pre_task_answers}
-
-まとめシート:
-{summary_sheet}
-
-評価基準:
-{evaluation_criteria}
-
-各基準について1-5点で評価し、評価理由を記載してください。
-事前課題とまとめシートの両方を考慮して総合的に評価してください。
-
-JSON形式で出力してください：
-{{
-    "evaluations": [
-        {{
-            "criteria": "基準名",
-            "score": 点数,
-            "reason": "評価理由"
-        }}
-    ],
-    "total_score": 合計点,
-    "overall_feedback": "総合フィードバック"
-}}"""
-                
-                # プリセットプロンプトの選択
-                st.write("**プロンプトテンプレートを選択:**")
-                preset_option = st.selectbox(
-                    "プリセット",
-                    options=["カスタム", "デフォルト", "詳細評価", "簡易評価", "成長重視"],
-                    help="プリセットを選択するか、カスタムで独自のプロンプトを作成できます"
-                )
-                
-                # プリセットプロンプトの定義
-                preset_prompts = {
-                    "デフォルト": default_prompt,
-                    "詳細評価": """受講者の事前課題回答とまとめシートを詳細に分析し、以下の観点から評価してください。
-
-【評価対象データ】
-◆事前課題回答:
-{pre_task_answers}
-
-◆まとめシート:
-{summary_sheet}
-
-【評価基準】
-{evaluation_criteria}
-
-【評価指示】
-1. 各基準について1-5点で採点（5点が最高）
-2. 評価理由は具体的な記述を引用しながら150-200字で記載
-3. 改善点や強みを明確に指摘
-4. 実践への意欲や理解度を重視
-
-JSON形式で出力:
-{{
-    "evaluations": [
-        {{
-            "criteria": "基準名",
-            "score": 点数,
-            "reason": "評価理由（具体的な記述を引用）"
-        }}
-    ],
-    "total_score": 合計点,
-    "overall_feedback": "総合フィードバック（強み・改善点・今後への期待を含む）"
-}}""",
-                    "簡易評価": """事前課題とまとめシートから受講者の理解度を評価してください。
-
-データ:
-- 事前課題: {pre_task_answers}
-- まとめ: {summary_sheet}
-- 基準: {evaluation_criteria}
-
-各基準を1-5点で評価し、簡潔な理由（50-80字）を付けてください。
-
-JSON出力:
-{{
-    "evaluations": [
-        {{"criteria": "基準名", "score": 点数, "reason": "理由"}}
-    ],
-    "total_score": 合計,
-    "overall_feedback": "総評"
-}}""",
-                    "成長重視": """受講者の成長可能性と実践意欲を重視して評価してください。
-
-【評価材料】
-■事前課題での気づき:
-{pre_task_answers}
-
-■研修での学び:
-{summary_sheet}
-
-【評価の視点】
-{evaluation_criteria}
-
-【評価方針】
-- 現状の課題認識の深さを重視（配点40%）
-- 改善への具体的なアプローチ（配点30%）
-- 実践への意欲と計画性（配点30%）
-- 各項目1-5点で評価
-
-【求める出力】
-JSON形式で以下を出力:
-{{
-    "evaluations": [
-        {{
-            "criteria": "基準名",
-            "score": 点数,
-            "reason": "成長の観点からの評価理由（100-150字）"
-        }}
-    ],
-    "total_score": 合計点,
-    "overall_feedback": "今後の成長への期待と具体的アドバイス（200字程度）"
-}}"""
+                student_inputs = {
+                    "受講生名": name.strip(),
+                    "管理課題 ①具体的な取り組み": mgmt_action_1,
+                    "管理課題 ①プロセス・結果": mgmt_result_1,
+                    "管理課題 ②具体的な取り組み": mgmt_action_2,
+                    "管理課題 ②プロセス・結果": mgmt_result_2,
+                    "管理課題 気づき": mgmt_learnings,
+                    "経営課題 ①危機感・機会感": manage_awareness_1,
+                    "経営課題 ②危機感・機会感": manage_awareness_2,
+                    "経営課題 ③危機感・機会感": manage_awareness_3,
+                    "経営課題 10年先の全社課題": manage_ten_year,
+                    "経営宣言 夢・ビジョン": vision,
+                    "経営宣言 行動と変化": action_plan,
+                    "経営宣言 価値観・信念": values,
                 }
-                
-                # プロンプト編集エリア
-                if preset_option != "カスタム":
-                    if st.button(f"「{preset_option}」プロンプトを適用", type="primary"):
-                        st.session_state.evaluation_prompt_template = preset_prompts[preset_option]
-                        st.success(f"✅ {preset_option}プロンプトを適用しました")
-                        st.rerun()
-                
-                st.write("**現在のプロンプト:**")
-                
-                # テキストエリアでプロンプト編集
-                edited_prompt = st.text_area(
-                    "評価プロンプト",
-                    value=st.session_state.evaluation_prompt_template,
-                    height=400,
-                    help="プロンプトを編集してAI評価の挙動をカスタマイズできます"
-                )
-                
-                # ボタンを横並びに
-                col1, col2, col3 = st.columns([1, 1, 1])
-                
-                with col1:
-                    if st.button("💾 プロンプトを保存", type="primary"):
-                        st.session_state.evaluation_prompt_template = edited_prompt
-                        st.success("✅ プロンプトを保存しました")
-                        st.rerun()
-                
-                with col2:
-                    if st.button("🔄 デフォルトに戻す"):
-                        st.session_state.evaluation_prompt_template = default_prompt
-                        st.success("✅ デフォルトのプロンプトに戻しました")
-                        st.rerun()
-                
-                with col3:
-                    # プロンプトのエクスポート
-                    st.download_button(
-                        label="📥 プロンプトをダウンロード",
-                        data=st.session_state.evaluation_prompt_template,
-                        file_name="evaluation_prompt.txt",
-                        mime="text/plain"
-                    )
-                
-                # プロンプトのプレビュー
-                with st.expander("プロンプトのプレビュー（変数展開例）"):
-                    st.write("**実際の評価時には以下のように変数が展開されます:**")
-                    
-                    sample_preview = st.session_state.evaluation_prompt_template.format(
-                        pre_task_answers="[受講者の事前課題回答がここに入ります]",
-                        summary_sheet="[受講者のまとめシートがここに入ります]",
-                        evaluation_criteria="[8つの評価基準がここに入ります]"
-                    )
-                    st.code(sample_preview, language="text")
-                
-                # プロンプト作成のヒント
-                with st.expander("💡 プロンプト作成のヒント"):
-                    st.markdown("""
-                    ### 効果的なプロンプトの書き方
-                    
-                    1. **明確な指示**: 評価の観点や重視するポイントを明確に記載
-                    2. **出力形式の指定**: JSON形式の構造を正確に指定
-                    3. **評価基準の活用**: `{evaluation_criteria}`変数を適切に配置
-                    4. **文字数の指定**: 評価理由の文字数を指定すると一貫性が保てます
-                    5. **重み付け**: 特定の観点を重視する場合は配点比率を明記
-                    
-                    ### 使用可能な変数
-                    - `{pre_task_answers}`: 事前課題の回答内容
-                    - `{summary_sheet}`: まとめシートの内容
-                    - `{evaluation_criteria}`: 8つの評価基準
-                    
-                    ### 必須の出力形式
-                    ```json
-                    {
-                        "evaluations": [...],
-                        "total_score": 数値,
-                        "overall_feedback": "文字列"
-                    }
-                    ```
-                    """)
-    
-    # アセスメント評価システム
-    elif st.session_state.system_mode == "assessment":
-        with st.sidebar:
-            st.header("📋 メニュー")
-            
-            if st.button("🏠 システム選択に戻る"):
-                st.session_state.system_mode = None
-                st.rerun()
-            
-            st.divider()
-            
-            # APIキー設定
-            with st.expander("🔑 API設定", expanded=not st.session_state.api_key):
-                api_key_input = st.text_input(
-                    "Claude API Key",
-                    value=st.session_state.api_key,
-                    type="password",
-                    help="Anthropic Claude APIのキーを入力してください"
-                )
-                if st.button("APIキーを保存", type="primary"):
-                    if api_key_input:
-                        st.session_state.api_key = api_key_input
-                        st.success("✅ APIキーを保存しました")
-                        st.rerun()
-                    else:
-                        st.error("APIキーを入力してください")
-            
-            if not st.session_state.api_key:
-                st.warning("⚠️ APIキーを設定してください")
-            else:
-                st.success("✅ API設定済み")
-        
-        st.header("AIによる昇進アセスメント評価ツール")
-        st.info("以下の表にあなたの考えを入力し、「AI評価を実行する」ボタンを押してください。3ステップのAI評価が実行されます。")
-        
-        # 初期データ
-        initial_data = {
-            "項目": [
-                "部署の現状と課題", "解決策の提案", "今後のビジョン",
-                "研修の振り返り", "今後1-2年の取り組み",
-            ],
-            "あなたの考え": ["", "", "", "", ""]
-        }
-        input_df = pd.DataFrame(initial_data)
-        
-        st.subheader("評価シート")
-        edited_df = st.data_editor(
-            input_df, height=300,
-            column_config={
-                "項目": st.column_config.TextColumn(disabled=True),
-                "あなたの考え": st.column_config.TextColumn(width="large")
-            }, hide_index=True)
-        
-        if st.button("AI評価を実行する", type="primary"):
-            if not st.session_state.api_key:
-                st.error("Claude APIキーが設定されていません。サイドバーから設定してください。")
-            else:
-                final_evaluation = run_assessment_evaluation_pipeline(edited_df)
-                if final_evaluation:
-                    st.header("最終評価結果")
-                    st.json(final_evaluation)
+                add_student_record(name.strip(), student_inputs)
+                st.success(f"{name.strip()} を登録しました。評価は『評価ダッシュボード』ページで実行できます。")
+                reset_registration_form()
 
-if __name__ == "__main__":
-    main()
+    render_divider()
+
+    st.subheader("登録済み受講生")
+    if st.session_state.students:
+        for record in st.session_state.students:
+            status = "評価済み" if record.evaluation else "未評価"
+            st.markdown(f"- {record.name} （{status}）")
+    else:
+        st.info("まだ受講生が登録されていません。")
+
+
+def run_student_evaluation(index: int) -> bool:
+    try:
+        evaluation = call_claude(st.session_state.students[index].inputs)
+    except (ValueError, ImportError, APIError) as exc:
+        st.error(f"評価の呼び出し中にエラーが発生しました: {exc}")
+        return False
+    set_student_evaluation(index, evaluation)
+    return True
+
+
+def render_evaluation_page() -> None:
+    st.header("評価ダッシュボード")
+    st.markdown("<span class='metric-chip'>STEP 2</span> Claude評価と分析", unsafe_allow_html=True)
+
+    if not st.session_state.students:
+        st.info("『受講生登録』ページで受講生を登録すると、ここで評価できます。")
+        return
+
+    students = st.session_state.students
+    pending_indices = [idx for idx, record in enumerate(students) if record.evaluation is None]
+
+    if pending_indices:
+        if st.button("未評価の受講生を一括評価", type="primary"):
+            completed_names = []
+            with st.spinner("未評価の受講生を順番に評価しています..."):
+                for idx in pending_indices:
+                    if run_student_evaluation(idx):
+                        completed_names.append(students[idx].name)
+                    else:
+                        break
+            if completed_names:
+                st.success("、".join(completed_names) + " の評価が完了しました。")
+
+    render_evaluation_overview(students)
+    render_divider()
+
+    single_student_mode = len(students) == 1
+
+    if single_student_mode:
+        record = students[0]
+        st.subheader(f"{record.name} の評価")
+        if record.evaluation:
+            render_student_card(
+                record,
+                show_header=False,
+                key_prefix=f"single_mode_{record.name}",
+            )
+        else:
+            st.info("まだ評価が実行されていません。下記の内容を確認し、評価を実行してください。")
+            st.markdown("**登録内容プレビュー**")
+            for section, value in record.inputs.items():
+                st.markdown(f"- {section}: {value.strip() or '未記入'}")
+            if st.button("Claudeで評価する", type="primary", key="single_student_evaluate"):
+                with st.spinner(f"{record.name} を評価しています..."):
+                    if run_student_evaluation(0):
+                        st.success(f"{record.name} の評価が完了しました。")
+        return
+
+    render_individual_results(students)
+
+    render_divider()
+
+    for idx, record in enumerate(students):
+        expanded = record.evaluation is None
+        with st.expander(record.name, expanded=expanded):
+            status = "評価済み" if record.evaluation else "未評価"
+            st.markdown(f"**評価ステータス**: {status}")
+            if record.evaluation:
+                render_student_card(
+                    record,
+                    show_header=False,
+                    key_prefix=f"expander_{idx}_{record.name}",
+                )
+            else:
+                st.markdown("**登録内容プレビュー**")
+                for section, value in record.inputs.items():
+                    st.markdown(f"- {section}: {value.strip() or '未記入'}")
+                if st.button("Claudeで評価する", key=f"evaluate_{idx}"):
+                    with st.spinner(f"{record.name} を評価しています..."):
+                        if run_student_evaluation(idx):
+                            st.success(f"{record.name} の評価が完了しました。")
+
+    evaluated_records = [record for record in students if record.evaluation]
+    if evaluated_records:
+        render_divider()
+        render_cohort_section(students)
+    else:
+        st.info("まだ評価済みの受講生がありません。未評価の受講生を評価してください。")
+
+
+PAGE_TITLE = "受講生評価ダッシュボード"
+st.set_page_config(page_title=PAGE_TITLE, page_icon="📊", layout="wide")
+ensure_session_state()
+inject_global_styles()
+
+st.sidebar.title("ナビゲーション")
+NAVIGATION_OPTIONS = ["受講生登録", "評価ダッシュボード"]
+current_page = st.sidebar.radio("ページを選択してください", NAVIGATION_OPTIONS)
+
+st.title(PAGE_TITLE)
+
+if current_page == NAVIGATION_OPTIONS[0]:
+    render_registration_page()
+else:
+    render_evaluation_page()
