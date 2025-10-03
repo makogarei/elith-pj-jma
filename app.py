@@ -926,6 +926,7 @@ def render_succession_registration_page() -> None:
 
     st.header("受講生の登録")
     st.caption("必要事項を入力して受講生を登録してください。評価は別ページで実行できます。")
+    render_divider()
     st.markdown("<span class='metric-chip'>STEP 1</span> 受講生情報の入力", unsafe_allow_html=True)
     st.write("各セクションを展開し、現状の取り組みや気づきを整理してください。")
 
@@ -1339,7 +1340,7 @@ def render_group_training_evaluation_page() -> None:
 def render_group_training_demo(sidebar_container) -> None:
     with sidebar_container:
         st.markdown("**集合研修デモ**")
-        st.caption("研修入力とAI評価を段階的に確認します。")
+        # st.caption("研修入力とAI評価を段階的に確認します。")
         current_page = st.radio(
             "集合研修デモ内のページを選択",
             GROUP_TRAINING_NAV_OPTIONS,
