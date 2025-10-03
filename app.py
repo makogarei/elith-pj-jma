@@ -1142,7 +1142,7 @@ SUCCESSION_NAV_OPTIONS = ["受講生登録", "評価デモ"]
 def render_succession_demo(sidebar_container) -> None:
     with sidebar_container:
         st.markdown("**サクセッションデモ**")
-        st.caption("次世代リーダー候補の登録とAI評価を切り替えます。")
+        # st.caption("次世代リーダー候補の登録とAI評価を切り替えます。")
         current_page = st.radio(
             "サクセッションデモ内のページを選択",
             SUCCESSION_NAV_OPTIONS,
