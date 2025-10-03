@@ -2,6 +2,7 @@ import json
 import os
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
+from statistics import mean
 
 import html
 
@@ -29,7 +30,134 @@ READINESS_LABELS = [
 ]
 
 
+GROUP_TRAINING_SAMPLE_PROGRAMS = [
+    {
+        "実施枠": "Day1 午前",
+        "テーマ": "経営環境の俯瞰",
+        "目的": "中長期の事業課題を言語化する",
+        "形式": "講義 + グループ対話",
+        "担当": "経営企画部",
+    },
+    {
+        "実施枠": "Day1 午後",
+        "テーマ": "ケーススタディ: 事業再構築",
+        "目的": "意思決定とリスク整理をシミュレーションする",
+        "形式": "ケース討議",
+        "担当": "戦略推進室",
+    },
+    {
+        "実施枠": "Day2 午前",
+        "テーマ": "イノベーションワーク",
+        "目的": "新規価値創出の構想を描く",
+        "形式": "プロトタイピング演習",
+        "担当": "DX推進部",
+    },
+]
+
+GROUP_TRAINING_FEEDBACK_DIMENSIONS = [
+    ("受講満足度", "プログラム全体の満足度"),
+    ("理解度", "学んだ内容の理解度"),
+    ("実践意欲", "現場での活用意欲"),
+    ("チーム連携度", "他部署との連携意欲"),
+]
+
+GROUP_TRAINING_SAMPLE_FEEDBACK = [
+    {
+        "参加者名": "佐藤 花子",
+        "所属 / 役職": "営業部 マネージャー",
+        "受講満足度": 5,
+        "理解度": 4,
+        "実践意欲": 5,
+        "チーム連携度": 4,
+        "コメント": "経営視点の議論が有益で、部門間連携のヒントになった。",
+    },
+    {
+        "参加者名": "田中 健",
+        "所属 / 役職": "製造部 課長",
+        "受講満足度": 4,
+        "理解度": 4,
+        "実践意欲": 4,
+        "チーム連携度": 5,
+        "コメント": "現場改善のアイデアを他部署と議論できた。",
+    },
+    {
+        "参加者名": "山本 美咲",
+        "所属 / 役職": "人材開発室",
+        "受講満足度": 5,
+        "理解度": 5,
+        "実践意欲": 4,
+        "チーム連携度": 5,
+        "コメント": "アクションプランの共有で参加者の一体感が高まった。",
+    },
+]
+
+
 EvaluationPayload = Dict[str, Any]
+
+
+GOAL_SETTING_CRITERIA = [
+    "ストレッチした目標表現に言及されている",
+    "目的・目標を分けて明確な目標表現をしようとしている",
+    "目標設定後メンバーから納得を引き出そうとしている",
+    "目標設定がメンバーの行動を決めるとして重要性を理解している",
+    "目標設定のための準備をしっかりと取ろうとしている",
+    "目標設定の重要性を表記している",
+    "目標設定は将来の成果を予め設定したものといった観点で表記されている",
+    "方針やビジョンと関連させようとした目標設定にしている",
+]
+
+
+GROUP_TRAINING_SECTIONS = [
+    (
+        "講座情報",
+        [
+            ("course_url", "講座説明のURL", "text_input"),
+        ],
+    ),
+    (
+        "事前課題",
+        [
+            ("org_expectation", "会社または上司からの受講者への期待", "text_area"),
+            ("participant_expectation", "受講に対する事前期待（受講者記入）", "text_area"),
+        ],
+    ),
+    (
+        "研修当日記入",
+        [
+            ("role_capability", "①管理者の役割と求められる能力・資質", "text_area"),
+            ("goal_setting", "②目標設定能力を高めるには", "text_area"),
+            ("planning", "③計画能力を伸ばすには", "text_area"),
+            ("organization", "④組織化能力を高めるには", "text_area"),
+            ("communication", "⑤コミュニケーション能力を高めるには", "text_area"),
+            ("motivation", "⑥動機づけ能力を伸ばすには", "text_area"),
+            ("development", "⑦使命としての部下・メンバー育成", "text_area"),
+            (
+                "reflection",
+                "研修を振り返って、自分が目指す管理職になるため 取り組むことや取り組みたい事について記入してください。",
+                "text_area",
+            ),
+        ],
+    ),
+]
+
+
+GROUP_TRAINING_FIELD_KEYS = {
+    "name": "group_training_name",
+    "course_url": "group_training_course_url",
+    "org_expectation": "group_training_org_expectation",
+    "participant_expectation": "group_training_participant_expectation",
+    "role_capability": "group_training_role_capability",
+    "goal_setting": "group_training_goal_setting",
+    "planning": "group_training_planning",
+    "organization": "group_training_organization",
+    "communication": "group_training_communication",
+    "motivation": "group_training_motivation",
+    "development": "group_training_development",
+    "reflection": "group_training_reflection",
+}
+
+
+GROUP_TRAINING_NAV_OPTIONS = ["受講者入力", "評価デモ"]
 
 
 @dataclass
@@ -37,6 +165,13 @@ class StudentRecord:
     name: str
     inputs: Dict[str, str]
     evaluation: Optional[EvaluationPayload] = None
+
+
+@dataclass
+class GroupTrainingParticipant:
+    name: str
+    inputs: Dict[str, str]
+    evaluation: Optional[Dict[str, Any]] = None
 
 
 @st.cache_resource(show_spinner=False)
@@ -226,6 +361,84 @@ def call_claude(student_inputs: Dict[str, str]) -> Dict[str, Dict[str, Dict[str,
     return payload
 
 
+def call_goal_setting_evaluation(participant_inputs: Dict[str, str]) -> Dict[str, Any]:
+    client = get_anthropic_client()
+    system_prompt = (
+        "You are an experienced facilitator for management training. "
+        "Score participants' goal-setting capability in Japanese."
+    )
+
+    input_block = []
+    for section, value in participant_inputs.items():
+        input_block.append(f"### {section}\n{value.strip() or '未記入'}")
+    joined_inputs = "\n\n".join(input_block)
+
+    criteria_lines = "\n".join(
+        f"    \"{label}\": {{\"score\": 1-5, \"reason\": \"...\"}}" for label in GOAL_SETTING_CRITERIA
+    )
+
+    user_prompt = f"""
+あなたは管理職研修の評価者です。以下の受講者入力を分析し、目標設定能力に関する8観点を5点満点の整数で評価してください。各観点について、観点ごとの行動や記述の有無を踏まえた評価根拠を簡潔に記載してください。必ず下記のJSONフォーマットのみを出力し、余分な文章は含めないでください。
+
+期待するJSON構造:
+{{
+  "goal_setting": {{
+{criteria_lines}
+  }},
+  "overall_summary": "観点全体を踏まえた講評"
+}}
+
+受講者の入力:
+{joined_inputs}
+"""
+
+    response = client.messages.create(
+        model="claude-opus-4-20250514",
+        max_tokens=1000,
+        system=system_prompt,
+        messages=[{"role": "user", "content": user_prompt}],
+    )
+
+    if not response.content:
+        raise ValueError("Claudeの応答が空でした。")
+
+    text_content = "".join(part.text for part in response.content if hasattr(part, "text"))
+    if not text_content:
+        raise ValueError("Claudeの応答にテキストが含まれていません。")
+
+    try:
+        payload = json.loads(text_content)
+    except json.JSONDecodeError:
+        json_candidate = extract_json_from_text(text_content)
+        if json_candidate is None:
+            preview = text_content[:200].replace("\n", " ")
+            raise ValueError(
+                f"Claudeの応答をJSONとして解釈できませんでした。応答内容: {preview}"
+            )
+        payload = json.loads(json_candidate)
+
+    goal_section = payload.get("goal_setting")
+    if not isinstance(goal_section, dict):
+        raise ValueError("goal_setting セクションが見つからないか不正です。")
+
+    for label in GOAL_SETTING_CRITERIA:
+        if label not in goal_section:
+            raise ValueError(f"{label} の評価が欠落しています。")
+        entry = goal_section[label]
+        score = entry.get("score") if isinstance(entry, dict) else None
+        reason = entry.get("reason") if isinstance(entry, dict) else None
+        if not isinstance(score, int) or not (1 <= score <= 5):
+            raise ValueError(f"{label} のスコアが1〜5の整数ではありません: {score}")
+        if not isinstance(reason, str) or not reason.strip():
+            raise ValueError(f"{label} の評価根拠が不正です。")
+
+    summary = payload.get("overall_summary")
+    if not isinstance(summary, str) or not summary.strip():
+        raise ValueError("overall_summary が欠落しているか不正です。")
+
+    return payload
+
+
 def ensure_session_state() -> None:
     if "students" not in st.session_state:
         st.session_state.students: List[StudentRecord] = []
@@ -233,6 +446,14 @@ def ensure_session_state() -> None:
         st.session_state.cohort_summary = None
     if "registration_form_version" not in st.session_state:
         st.session_state.registration_form_version = 0
+    if "group_training_programs" not in st.session_state:
+        st.session_state.group_training_programs = [dict(item) for item in GROUP_TRAINING_SAMPLE_PROGRAMS]
+    if "group_training_feedback" not in st.session_state:
+        st.session_state.group_training_feedback = [dict(item) for item in GROUP_TRAINING_SAMPLE_FEEDBACK]
+    if "group_training_participants" not in st.session_state:
+        st.session_state.group_training_participants: List[GroupTrainingParticipant] = []
+    if "group_training_form_version" not in st.session_state:
+        st.session_state.group_training_form_version = 0
 
 
 def add_student_record(name: str, inputs: Dict[str, str]) -> None:
@@ -244,6 +465,82 @@ def add_student_record(name: str, inputs: Dict[str, str]) -> None:
 def set_student_evaluation(index: int, evaluation: EvaluationPayload) -> None:
     st.session_state.students[index].evaluation = evaluation
     st.session_state.cohort_summary = None
+
+
+def add_group_training_participant(name: str, inputs: Dict[str, str]) -> None:
+    participant = GroupTrainingParticipant(name=name, inputs=inputs)
+    st.session_state.group_training_participants.append(participant)
+
+
+def set_group_training_evaluation(index: int, evaluation: Dict[str, Any]) -> None:
+    st.session_state.group_training_participants[index].evaluation = evaluation
+
+
+def reset_group_training_form() -> None:
+    st.session_state.group_training_form_version += 1
+
+
+def run_goal_setting_evaluation(index: int) -> bool:
+    try:
+        evaluation = call_goal_setting_evaluation(
+            st.session_state.group_training_participants[index].inputs
+        )
+    except (ValueError, ImportError, APIError) as exc:
+        st.error(f"評価の呼び出し中にエラーが発生しました: {exc}")
+        return False
+    set_group_training_evaluation(index, evaluation)
+    return True
+
+
+def render_goal_setting_result(
+    participant: GroupTrainingParticipant,
+    *,
+    key_prefix: str,
+) -> None:
+    if participant.evaluation is None:
+        st.warning("まだ評価が実行されていません。")
+        return
+
+    goal_section = participant.evaluation.get("goal_setting", {})
+    entries = []
+    scores: List[int] = []
+    for label in GOAL_SETTING_CRITERIA:
+        entry = goal_section.get(label, {"score": 0, "reason": ""})
+        entries.append((label, entry))
+        scores.append(entry.get("score", 0))
+
+    avg_score = sum(scores) / len(scores) if scores else 0.0
+    top_label, top_entry = max(entries, key=lambda item: item[1].get("score", 0))
+    growth_label, growth_entry = min(entries, key=lambda item: item[1].get("score", 0))
+
+    render_metric_row(
+        [
+            {"title": "平均スコア", "value": f"{avg_score:.1f}点", "caption": "8観点の平均"},
+            {
+                "title": "強み",
+                "value": f"{top_label} {top_entry.get('score', 0)}点",
+                "caption": "最もスコアが高い観点",
+            },
+            {
+                "title": "伸びしろ",
+                "value": f"{growth_label} {growth_entry.get('score', 0)}点",
+                "caption": "優先的に強化したい観点",
+            },
+        ]
+    )
+
+    render_score_cards("評価詳細", entries)
+
+    summary_text = participant.evaluation.get("overall_summary", "（未提供）")
+    st.markdown(f"**総評:** {summary_text}")
+
+    normalized_prefix = key_prefix.replace(" ", "_")
+    render_radar_chart(
+        f"{participant.name} - 目標設定能力",
+        GOAL_SETTING_CRITERIA,
+        {participant.name: scores},
+        chart_key=f"{normalized_prefix}_goal_setting_radar",
+    )
 
 
 def render_radar_chart(
@@ -621,7 +918,7 @@ def reset_registration_form() -> None:
     st.session_state.registration_form_version += 1
 
 
-def render_registration_page() -> None:
+def render_succession_registration_page() -> None:
     version = st.session_state.registration_form_version
 
     def widget_key(field: str) -> str:
@@ -758,7 +1055,7 @@ def run_student_evaluation(index: int) -> bool:
     return True
 
 
-def render_evaluation_page() -> None:
+def render_succession_evaluation_page() -> None:
     st.header("評価デモ")
     st.markdown("<span class='metric-chip'>STEP 2</span> Claude評価と分析", unsafe_allow_html=True)
 
@@ -838,18 +1135,252 @@ def render_evaluation_page() -> None:
         st.info("まだ評価済みの受講生がありません。未評価の受講生を評価してください。")
 
 
-PAGE_TITLE = "受講生評価demo"
-st.set_page_config(page_title=PAGE_TITLE, page_icon="📊", layout="wide")
-ensure_session_state()
-inject_global_styles()
+SUCCESSION_NAV_OPTIONS = ["受講生登録", "評価デモ"]
 
-st.sidebar.title("ナビゲーション")
-NAVIGATION_OPTIONS = ["受講生登録", "評価デモ"]
-current_page = st.sidebar.radio("ページを選択してください", NAVIGATION_OPTIONS)
 
-st.title(PAGE_TITLE)
+def render_succession_demo(sidebar_container) -> None:
+    with sidebar_container:
+        st.markdown("**サクセッションデモ**")
+        st.caption("次世代リーダー候補の登録とAI評価を切り替えます。")
+        current_page = st.radio(
+            "サクセッションデモ内のページを選択",
+            SUCCESSION_NAV_OPTIONS,
+            key="succession_nav",
+            label_visibility="collapsed",
+            format_func=lambda opt: "📋 " + opt if opt == SUCCESSION_NAV_OPTIONS[0] else "🧭 " + opt,
+        )
 
-if current_page == NAVIGATION_OPTIONS[0]:
-    render_registration_page()
-else:
-    render_evaluation_page()
+    st.title("サクセッションデモ")
+    if current_page == SUCCESSION_NAV_OPTIONS[0]:
+        render_succession_registration_page()
+    else:
+        render_succession_evaluation_page()
+
+
+def render_group_training_input_page() -> None:
+    st.caption("研修前後の入力を整理し、AI評価の材料を準備します。")
+
+    render_divider()
+
+    version = st.session_state.group_training_form_version
+
+    def widget_key(field: str) -> str:
+        return f"{GROUP_TRAINING_FIELD_KEYS[field]}_{version}"
+
+    st.subheader("受講者入力フォーム")
+    st.markdown("<span class='metric-chip'>STEP 1</span> 研修情報と振り返りの入力", unsafe_allow_html=True)
+    st.write("講座情報・事前課題・研修当日の振り返りを整理し、AI評価の材料とします。")
+
+    with st.form("group_training_participant_form"):
+        name = st.text_input(
+            "受講者名",
+            key=widget_key("name"),
+            placeholder="例：山田 花子",
+            help="レポートに表示される氏名を入力してください",
+        )
+
+        form_values: Dict[str, str] = {}
+        for section_title, field_defs in GROUP_TRAINING_SECTIONS:
+            with st.expander(section_title, expanded=True):
+                for field_key, label, widget_type in field_defs:
+                    if widget_type == "text_input":
+                        form_values[field_key] = st.text_input(
+                            label,
+                            key=widget_key(field_key),
+                            value="https://school.jma.or.jp/products/detail.php?product_id=100132",
+                            # placeholder="https://example.com/training",
+                        )
+                    else:
+                        form_values[field_key] = st.text_area(
+                            label,
+                            key=widget_key(field_key),
+                            placeholder="このセクションでの気づきや考えを自由に記入してください。",
+                            height=160,
+                        )
+
+        action_cols = st.columns([2, 1])
+        with action_cols[0]:
+            submitted = st.form_submit_button("受講者を登録する", type="primary")
+        with action_cols[1]:
+            cleared = st.form_submit_button("入力をクリアする")
+
+        if cleared:
+            reset_group_training_form()
+            st.info("フォームをクリアしました。再度入力してください。")
+
+        if submitted:
+            if not name.strip():
+                st.error("受講者名を入力してください。")
+            else:
+                participant_inputs: Dict[str, str] = {"受講者名": name.strip()}
+                for _, field_defs in GROUP_TRAINING_SECTIONS:
+                    for field_key, label, _ in field_defs:
+                        participant_inputs[label] = form_values.get(field_key, "")
+                add_group_training_participant(name.strip(), participant_inputs)
+                st.success(f"{name.strip()} を登録しました。AI評価は『AI評価』ページで実行できます。")
+                reset_group_training_form()
+
+    render_divider()
+
+    participants = st.session_state.group_training_participants
+    st.subheader("登録済み受講者")
+    if participants:
+        for participant in participants:
+            status = "評価済み" if participant.evaluation else "未評価"
+            st.markdown(f"- {participant.name} （{status}）")
+    else:
+        st.info("まだ受講者が登録されていません。フォームから入力してください。")
+
+
+def render_group_training_evaluation_page() -> None:
+    st.caption("登録済みの入力内容をもとに、Claudeによる目標設定能力評価を実行します。")
+
+    participants = st.session_state.group_training_participants
+    if not participants:
+        render_divider()
+        st.info("まだ受講者が登録されていません。『受講者入力』ページで登録してください。")
+        return
+
+    render_divider()
+
+    st.subheader("受講者一覧とAI評価")
+
+    pending_indices = [idx for idx, record in enumerate(participants) if record.evaluation is None]
+    if pending_indices:
+        if st.button("未評価の受講者を一括評価", type="primary"):
+            completed_names: List[str] = []
+            with st.spinner("未評価の受講者を順番に評価しています..."):
+                for idx in pending_indices:
+                    if run_goal_setting_evaluation(idx):
+                        completed_names.append(participants[idx].name)
+                    else:
+                        break
+            if completed_names:
+                st.success("、".join(completed_names) + " の評価が完了しました。")
+
+    evaluated = [record for record in participants if record.evaluation]
+    metrics = [
+        {
+            "title": "登録済み受講者",
+            "value": f"{len(participants)}名",
+            "caption": "現在ダッシュボードに登録されている人数",
+        },
+        {
+            "title": "評価完了",
+            "value": f"{len(evaluated)}名",
+            "caption": f"未評価 {len(participants) - len(evaluated)}名",
+        },
+    ]
+
+    criterion_averages: Dict[str, float] = {}
+    if evaluated:
+        for label in GOAL_SETTING_CRITERIA:
+            scores = [record.evaluation["goal_setting"][label]["score"] for record in evaluated]
+            criterion_averages[label] = mean(scores)
+        overall_avg = sum(criterion_averages.values()) / len(GOAL_SETTING_CRITERIA)
+        metrics.append(
+            {
+                "title": "平均スコア",
+                "value": f"{overall_avg:.1f}点",
+                "caption": "目標設定能力8観点の平均",
+            }
+        )
+
+    render_metric_row(metrics)
+
+    if evaluated:
+        score_table: List[Dict[str, Any]] = []
+        reason_table: List[Dict[str, str]] = []
+        for label in GOAL_SETTING_CRITERIA:
+            score_row: Dict[str, Any] = {"観点": label}
+            reason_row: Dict[str, str] = {"観点": label}
+            for record in evaluated:
+                entry = record.evaluation["goal_setting"][label]
+                score_row[record.name] = entry["score"]
+                reason_row[record.name] = entry["reason"]
+            score_table.append(score_row)
+            reason_table.append(reason_row)
+
+        st.markdown("### スコア比較表")
+        st.table(score_table)
+
+        st.markdown("### 評価根拠表")
+        st.dataframe(reason_table, use_container_width=True)
+
+        render_radar_chart(
+            "平均スコアレーダーチャート",
+            GOAL_SETTING_CRITERIA,
+            {"平均スコア": [criterion_averages[label] for label in GOAL_SETTING_CRITERIA]},
+            chart_key="goal_setting_average_radar",
+        )
+
+    render_divider()
+
+    for idx, participant in enumerate(participants):
+        expanded = participant.evaluation is None
+        with st.expander(participant.name, expanded=expanded):
+            status = "評価済み" if participant.evaluation else "未評価"
+            st.markdown(f"**評価ステータス**: {status}")
+            if participant.evaluation:
+                render_goal_setting_result(
+                    participant,
+                    key_prefix=f"group_training_{idx}_{participant.name}",
+                )
+            else:
+                st.markdown("**登録内容プレビュー**")
+                for label, value in participant.inputs.items():
+                    st.markdown(f"- {label}: {value.strip() or '未記入'}")
+                if st.button("Claudeで評価する", key=f"group_training_evaluate_{idx}"):
+                    with st.spinner(f"{participant.name} を評価しています..."):
+                        if run_goal_setting_evaluation(idx):
+                            st.success(f"{participant.name} の評価が完了しました。")
+
+
+def render_group_training_demo(sidebar_container) -> None:
+    with sidebar_container:
+        st.markdown("**集合研修デモ**")
+        st.caption("研修入力とAI評価を段階的に確認します。")
+        current_page = st.radio(
+            "集合研修デモ内のページを選択",
+            GROUP_TRAINING_NAV_OPTIONS,
+            key="group_training_nav",
+            label_visibility="collapsed",
+            format_func=lambda opt: "📝 " + opt if opt == GROUP_TRAINING_NAV_OPTIONS[0] else "✨ " + opt,
+        )
+
+    st.title("集合研修デモ")
+    if current_page == GROUP_TRAINING_NAV_OPTIONS[0]:
+        render_group_training_input_page()
+    else:
+        render_group_training_evaluation_page()
+
+
+def main() -> None:
+    st.set_page_config(page_title="日本能率協会様デモ", page_icon="📊", layout="wide")
+    ensure_session_state()
+    inject_global_styles()
+
+    with st.sidebar:
+        # st.title("ナビゲーション")
+        st.divider()
+
+        demo_options = ["サクセッションデモ", "集合研修デモ"]
+        selected_demo = st.radio(
+            "デモを選択してください",
+            demo_options,
+            key="demo_selector",
+            label_visibility="collapsed",
+            format_func=lambda opt: "👥 " + opt if opt == demo_options[0] else "🏫 " + opt,
+        )
+
+        st.divider()
+        sidebar_section = st.container()
+
+    if selected_demo == demo_options[0]:
+        render_succession_demo(sidebar_section)
+    else:
+        render_group_training_demo(sidebar_section)
+
+
+if __name__ == "__main__":
+    main()
