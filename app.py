@@ -157,7 +157,7 @@ GROUP_TRAINING_FIELD_KEYS = {
 }
 
 
-GROUP_TRAINING_NAV_OPTIONS = ["受講者入力", "評価デモ"]
+GROUP_TRAINING_NAV_OPTIONS = ["受講者入力", "評価デモ(JMA様用)", "評価デモ(クライアント用)"]
 
 
 @dataclass
@@ -534,13 +534,13 @@ def render_goal_setting_result(
     summary_text = participant.evaluation.get("overall_summary", "（未提供）")
     st.markdown(f"**総評:** {summary_text}")
 
-    normalized_prefix = key_prefix.replace(" ", "_")
-    render_radar_chart(
-        f"{participant.name} - 目標設定能力",
-        GOAL_SETTING_CRITERIA,
-        {participant.name: scores},
-        chart_key=f"{normalized_prefix}_goal_setting_radar",
-    )
+    # normalized_prefix = key_prefix.replace(" ", "_")
+    # render_radar_chart(
+    #     f"{participant.name} - 目標設定能力",
+    #     GOAL_SETTING_CRITERIA,
+    #     {participant.name: scores},
+    #     chart_key=f"{normalized_prefix}_goal_setting_radar",
+    # )
 
 
 def render_radar_chart(
@@ -722,21 +722,21 @@ def render_student_card(
     st.markdown("---")
     st.markdown(f"**受講生の全体まとめ:** {record.evaluation.get('overall_summary', '（未提供）')}")
 
-    prefix = key_prefix or record.name
-    normalized_prefix = prefix.replace(" ", "_")
+    # prefix = key_prefix or record.name
+    # normalized_prefix = prefix.replace(" ", "_")
 
-    render_radar_chart(
-        f"{record.name} - コンピテンシー評価",
-        [label for label, _ in COMPETENCY_LABELS],
-        {record.name: competency_scores},
-        chart_key=f"{normalized_prefix}_competency_radar",
-    )
-    render_radar_chart(
-        f"{record.name} - 経営者準備度",
-        [label for label, _ in READINESS_LABELS],
-        {record.name: readiness_scores},
-        chart_key=f"{normalized_prefix}_readiness_radar",
-    )
+    # render_radar_chart(
+    #     f"{record.name} - コンピテンシー評価",
+    #     [label for label, _ in COMPETENCY_LABELS],
+    #     {record.name: competency_scores},
+    #     chart_key=f"{normalized_prefix}_competency_radar",
+    # )
+    # render_radar_chart(
+    #     f"{record.name} - 経営者準備度",
+    #     [label for label, _ in READINESS_LABELS],
+    #     {record.name: readiness_scores},
+    #     chart_key=f"{normalized_prefix}_readiness_radar",
+    # )
 
 
 def compute_cohort_stats(records: List[StudentRecord]):
@@ -816,51 +816,51 @@ def render_cohort_section(records: List[StudentRecord]):
         ]
     )
 
-    render_radar_chart(
-        "平均コンピテンシー",
-        [label for label, _ in COMPETENCY_LABELS],
-        {
-            "平均": [
-                stats["avg_competency"][label]
-                for label, _ in COMPETENCY_LABELS
-            ]
-        },
-        chart_key="cohort_avg_competency",
-    )
-    render_radar_chart(
-        "平均経営者準備度",
-        [label for label, _ in READINESS_LABELS],
-        {
-            "平均": [
-                stats["avg_readiness"][label]
-                for label, _ in READINESS_LABELS
-            ]
-        },
-        chart_key="cohort_avg_readiness",
-    )
+    # render_radar_chart(
+    #     "平均コンピテンシー",
+    #     [label for label, _ in COMPETENCY_LABELS],
+    #     {
+    #         "平均": [
+    #             stats["avg_competency"][label]
+    #             for label, _ in COMPETENCY_LABELS
+    #         ]
+    #     },
+    #     chart_key="cohort_avg_competency",
+    # )
+    # render_radar_chart(
+    #     "平均経営者準備度",
+    #     [label for label, _ in READINESS_LABELS],
+    #     {
+    #         "平均": [
+    #             stats["avg_readiness"][label]
+    #             for label, _ in READINESS_LABELS
+    #         ]
+    #     },
+    #     chart_key="cohort_avg_readiness",
+    # )
 
-    multi_series_competency = {}
-    multi_series_readiness = {}
-    for record in evaluated_records:
-        multi_series_competency[record.name] = [
-            record.evaluation["competency"][label]["score"] for label, _ in COMPETENCY_LABELS
-        ]
-        multi_series_readiness[record.name] = [
-            record.evaluation["readiness"][label]["score"] for label, _ in READINESS_LABELS
-        ]
+    # multi_series_competency = {}
+    # multi_series_readiness = {}
+    # for record in evaluated_records:
+    #     multi_series_competency[record.name] = [
+    #         record.evaluation["competency"][label]["score"] for label, _ in COMPETENCY_LABELS
+    #     ]
+    #     multi_series_readiness[record.name] = [
+    #         record.evaluation["readiness"][label]["score"] for label, _ in READINESS_LABELS
+    #     ]
 
-    render_radar_chart(
-        "受講生比較 - コンピテンシー",
-        [label for label, _ in COMPETENCY_LABELS],
-        multi_series_competency,
-        chart_key="cohort_compare_competency",
-    )
-    render_radar_chart(
-        "受講生比較 - 経営者準備度",
-        [label for label, _ in READINESS_LABELS],
-        multi_series_readiness,
-        chart_key="cohort_compare_readiness",
-    )
+    # render_radar_chart(
+    #     "受講生比較 - コンピテンシー",
+    #     [label for label, _ in COMPETENCY_LABELS],
+    #     multi_series_competency,
+    #     chart_key="cohort_compare_competency",
+    # )
+    # render_radar_chart(
+    #     "受講生比較 - 経営者準備度",
+    #     [label for label, _ in READINESS_LABELS],
+    #     multi_series_readiness,
+    #     chart_key="cohort_compare_readiness",
+    # )
 
     if st.session_state.cohort_summary is None:
         st.session_state.cohort_summary = build_cohort_summary(stats)
@@ -1308,12 +1308,12 @@ def render_group_training_evaluation_page() -> None:
         st.markdown("### 評価根拠表")
         st.dataframe(reason_table, use_container_width=True)
 
-        render_radar_chart(
-            "平均スコアレーダーチャート",
-            GOAL_SETTING_CRITERIA,
-            {"平均スコア": [criterion_averages[label] for label in GOAL_SETTING_CRITERIA]},
-            chart_key="goal_setting_average_radar",
-        )
+        # render_radar_chart(
+        #     "平均スコアレーダーチャート",
+        #     GOAL_SETTING_CRITERIA,
+        #     {"平均スコア": [criterion_averages[label] for label in GOAL_SETTING_CRITERIA]},
+        #     chart_key="goal_setting_average_radar",
+        # )
 
     render_divider()
 
