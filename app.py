@@ -1189,7 +1189,6 @@ def render_group_training_input_page() -> None:
                             label,
                             key=widget_key(field_key),
                             value="https://school.jma.or.jp/products/detail.php?product_id=100132",
-                            # placeholder="https://example.com/training",
                         )
                     else:
                         form_values[field_key] = st.text_area(
@@ -1337,6 +1336,175 @@ def render_group_training_evaluation_page() -> None:
                             st.success(f"{participant.name} の評価が完了しました。")
 
 
+def render_group_training_evaluation_client_page() -> None:
+    st.caption("登録済みの入力内容をもとに、Claudeによる目標設定能力評価を実行します。")
+
+    participants = st.session_state.group_training_participants
+    if not participants:
+        render_divider()
+        st.info("まだ受講者が登録されていません。『受講者入力』ページで登録してください。")
+        return
+
+    render_divider()
+
+    st.markdown("### 受講者別平均スコア一覧")
+    evaluated = [participant for participant in participants if participant.evaluation]
+    if evaluated:
+        # 受講者を列、評価項目を行に配置
+        # まず各受講者の目標設定能力の平均点を計算
+        participant_averages: Dict[str, str] = {}
+        for participant in evaluated:
+            scores: List[float] = []
+            goal_scores = participant.evaluation.get("goal_setting", {}) if isinstance(participant.evaluation, dict) else {}
+            for label in GOAL_SETTING_CRITERIA:
+                entry = goal_scores.get(label)
+                if isinstance(entry, dict):
+                    score = entry.get("score")
+                    if isinstance(score, (int, float)):
+                        scores.append(score)
+            average_value = mean(scores) if scores else None
+            participant_averages[participant.name] = f"{average_value:.1f}" if average_value is not None else "―"
+
+        # 評価項目を行として構築
+        evaluation_items = [
+            "①管理者の役割と求められる能力・資質",
+            "②目標設定能力を高めるには",
+            "③計画能力を伸ばすには",
+            "④組織化能力を高めるには",
+            "⑤コミュニケーション能力を高めるには",
+            "⑥動機づけ能力を伸ばすには",
+            "⑦使命としての部下・メンバー育成",
+        ]
+
+        table_data: List[Dict[str, Any]] = []
+        for item in evaluation_items:
+            row: Dict[str, Any] = {"評価項目": item}
+            for participant in evaluated:
+                if item == "②目標設定能力を高めるには":
+                    row[participant.name] = participant_averages[participant.name]
+                else:
+                    row[participant.name] = ""
+            table_data.append(row)
+
+        st.table(table_data)
+
+        # レーダーチャートの表示
+        st.markdown("### 受講者別評価レーダーチャート")
+
+        # 各受講者のデータを準備
+        chart_data = {}
+        for participant in evaluated:
+            scores = []
+            # 現在は②目標設定能力のみ点数があるので、それ以外は0点
+            scores.append(0)  # ①管理者の役割と求められる能力・資質
+
+            # ②目標設定能力を高めるには - 実際の平均点
+            goal_scores_list: List[float] = []
+            goal_scores = participant.evaluation.get("goal_setting", {}) if isinstance(participant.evaluation, dict) else {}
+            for label in GOAL_SETTING_CRITERIA:
+                entry = goal_scores.get(label)
+                if isinstance(entry, dict):
+                    score = entry.get("score")
+                    if isinstance(score, (int, float)):
+                        goal_scores_list.append(score)
+            avg_score = mean(goal_scores_list) if goal_scores_list else 0
+            scores.append(avg_score)
+
+            scores.append(0)  # ③計画能力を伸ばすには
+            scores.append(0)  # ④組織化能力を高めるには
+            scores.append(0)  # ⑤コミュニケーション能力を高めるには
+            scores.append(0)  # ⑥動機づけ能力を伸ばすには
+            scores.append(0)  # ⑦使命としての部下・メンバー育成
+
+            chart_data[participant.name] = scores
+
+        # レーダーチャートを描画
+        render_radar_chart(
+            "受講者別評価比較",
+            [item.replace("①", "").replace("②", "").replace("③", "").replace("④", "").replace("⑤", "").replace("⑥", "").replace("⑦", "") for item in evaluation_items],
+            chart_data,
+            chart_key="group_training_client_radar",
+        )
+
+        # 総評の生成と表示
+        render_divider()
+        st.markdown("### 今回の研修総評")
+
+        # 受講者の平均点を計算
+        all_averages = [float(participant_averages[p.name].replace("―", "0")) for p in evaluated]
+        overall_avg = mean(all_averages) if all_averages else 0
+
+        # 最高得点と最低得点の受講者を特定
+        max_participant = max(evaluated, key=lambda p: float(participant_averages[p.name].replace("―", "0")))
+        min_participant = min(evaluated, key=lambda p: float(participant_averages[p.name].replace("―", "0")))
+
+        # 観点別の平均スコアを計算し、最高と最低を特定
+        criterion_scores: Dict[str, List[float]] = {label: [] for label in GOAL_SETTING_CRITERIA}
+        for participant in evaluated:
+            goal_scores = participant.evaluation.get("goal_setting", {}) if isinstance(participant.evaluation, dict) else {}
+            for label in GOAL_SETTING_CRITERIA:
+                entry = goal_scores.get(label)
+                if isinstance(entry, dict):
+                    score = entry.get("score")
+                    if isinstance(score, (int, float)):
+                        criterion_scores[label].append(score)
+
+        criterion_avg_scores = {label: mean(scores) if scores else 0 for label, scores in criterion_scores.items()}
+        top_criterion = max(criterion_avg_scores.items(), key=lambda x: x[1])
+        bottom_criterion = min(criterion_avg_scores.items(), key=lambda x: x[1])
+
+        # メトリック表示
+        render_metric_row(
+            [
+                {
+                    "title": "平均スコア",
+                    "value": f"{overall_avg:.1f}点",
+                    "caption": "全受講者の総合平均",
+                },
+                {
+                    "title": "強み",
+                    "value": f"{top_criterion[0]}",
+                    "caption": f"{top_criterion[1]:.1f}点 - 最も評価が高い観点",
+                },
+                {
+                    "title": "伸びしろ",
+                    "value": f"{bottom_criterion[0]}",
+                    "caption": f"{bottom_criterion[1]:.1f}点 - 強化が期待される観点",
+                },
+            ]
+        )
+
+        summary_text = f"""
+今回の研修では、{len(evaluated)}名の受講者が「目標設定能力を高めるには」の評価を受けました。
+全体の平均スコアは{overall_avg:.1f}点で、受講者の皆様は目標設定に関する基本的な理解と実践力を示しています。
+特に{max_participant.name}様は{participant_averages[max_participant.name]}点と高い評価を獲得し、
+目標設定における明確な表現力と重要性の理解が際立っていました。
+一方で、{min_participant.name}様は{participant_averages[min_participant.name]}点と、
+今後の成長の余地が大きく、継続的な学習と実践を通じてさらなる向上が期待されます。
+
+観点別では、「{top_criterion[0]}」が平均{top_criterion[1]:.1f}点と全体の強みとして浮かび上がりました。
+一方、「{bottom_criterion[0]}」は平均{bottom_criterion[1]:.1f}点であり、今後重点的に強化すべき領域といえます。
+
+今後は、他の管理職能力（計画力、組織化力、コミュニケーション力など）についても評価を進め、
+総合的なマネジメント力の強化を図っていくことが重要です。
+        """.strip()
+
+        st.markdown(f"**{summary_text}**")
+
+        # # 受講者一覧とAI評価の詳細
+        # render_divider()
+        # st.markdown("### 受講者一覧とAI評価")
+
+        # for idx, participant in enumerate(evaluated):
+        #     with st.expander(f"{participant.name} の評価詳細", expanded=False):
+        #         render_goal_setting_result(
+        #             participant,
+        #             key_prefix=f"group_training_client_{idx}_{participant.name}",
+        #         )
+    else:
+        st.info("AI評価が完了した受講者のスコアがまだありません。")
+
+
 def render_group_training_demo(sidebar_container) -> None:
     with sidebar_container:
         st.markdown("**集合研修デモ**")
@@ -1346,14 +1514,16 @@ def render_group_training_demo(sidebar_container) -> None:
             GROUP_TRAINING_NAV_OPTIONS,
             key="group_training_nav",
             label_visibility="collapsed",
-            format_func=lambda opt: "📝 " + opt if opt == GROUP_TRAINING_NAV_OPTIONS[0] else "✨ " + opt,
+            format_func=lambda opt: "📝 " + opt if opt == GROUP_TRAINING_NAV_OPTIONS[0] else ("✨ " + opt if opt == GROUP_TRAINING_NAV_OPTIONS[1] else "📊 " + opt),
         )
 
     st.title("集合研修デモ")
     if current_page == GROUP_TRAINING_NAV_OPTIONS[0]:
         render_group_training_input_page()
-    else:
+    elif current_page == GROUP_TRAINING_NAV_OPTIONS[1]:
         render_group_training_evaluation_page()
+    elif current_page == GROUP_TRAINING_NAV_OPTIONS[2]:
+        render_group_training_evaluation_client_page()
 
 
 def main() -> None:
